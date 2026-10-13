@@ -3,6 +3,7 @@
 #include "shape/shape.hpp"
 
 #include <iostream>
+#include <iomanip>
 
 namespace shape
 {

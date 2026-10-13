@@ -1,6 +1,7 @@
 #include "shape/writer.hpp"
 
 #include <fstream>
+#include <iomanip>
 
 using namespace shape;
 

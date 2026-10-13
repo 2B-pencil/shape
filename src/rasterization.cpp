@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #ifdef RASTERIZATION_ENABLE_DEBUG
 #include <iostream>
 #endif

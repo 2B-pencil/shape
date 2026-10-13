@@ -12,6 +12,7 @@
 #include <iostream>
 #endif
 #include <fstream>
+#include <iomanip>
 
 using namespace shape;
 

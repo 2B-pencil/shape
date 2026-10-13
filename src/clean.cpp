@@ -6,6 +6,7 @@
 #include "shape/equalize.hpp"
 #include "shape/boolean_operations.hpp"
 #include "shape/shapes_intersections.hpp"
+#include <iomanip>
 #ifdef CLEAN_ENABLE_DEBUG
 #include "shape/writer.hpp"
 #include <fstream>
