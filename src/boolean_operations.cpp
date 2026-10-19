@@ -41,6 +41,20 @@ struct SplittedElement
     ShapePos orig_shape_id = -1;
 
     bool original_direction = true;
+
+    /**
+     * Whether the element is part of a bridge between two components; such
+     * an element is not on the boundary of its original shape.
+     */
+    bool is_component_bridge = false;
+
+    /**
+     * Whether the element is on the boundary of each of its original shapes
+     * as many times in both directions, for example the common edge of two
+     * holes of a shape. It doesn't separate the inside from the outside of
+     * any of them.
+     */
+    bool is_cancelled = false;
 };
 
 bool operator==(
@@ -94,6 +108,8 @@ struct ComputeSplittedElementsOutput
 struct ElementToSplit
 {
     ShapePos orig_shape_id = -1;
+
+    bool is_component_bridge = false;
 };
 
 struct ComponentBridge
@@ -133,10 +149,10 @@ ComponentBridge find_component_bridge(
     }
 
     // Find the AABB of the outer component to bound the ray.
-    // Also pick a shape from the outer component for orig_shape_id: the bridge
-    // starts at the outer boundary, so it must be attributed to the outer
-    // (base) shape so that face traversal correctly marks the donut face as
-    // "inside the base" rather than "inside the subtractor".
+    // Also pick a shape from the outer component for orig_shape_id, so that
+    // the bridge belongs to the outer component. The bridge is not on the
+    // boundary of this shape, so it is not used to decide which shapes a face
+    // is inside.
     LengthDbl outer_x_min = std::numeric_limits<LengthDbl>::infinity();
     for (ShapePos shape_pos = 0;
             shape_pos < (ShapePos)shapes.size();
@@ -220,6 +236,7 @@ void bridge_components(
     {
         ElementToSplit element_info;
         element_info.orig_shape_id = bridge.orig_shape_id;
+        element_info.is_component_bridge = true;
         elements_info.push_back(element_info);
     }
     elements_intersections.push_back({});
@@ -302,6 +319,26 @@ ComputeSplittedElementsOutput compute_splitted_elements(
                 }
                 if (hole_pos == (ShapePos)shape.holes.size()) {
                     elements.push_back(element);
+                } else if (element.type == ShapeElementType::CircularArc
+                        && element.orientation == ShapeElementOrientation::Full) {
+                    // Reversing a full circle doesn't change its orientation,
+                    // and full circles are split into anticlockwise arcs. So
+                    // a hole made of a full circle is split here into two
+                    // clockwise half circles.
+                    Point antipode = 2 * element.center - element.start;
+                    elements.push_back(build_circular_arc(
+                                element.start,
+                                antipode,
+                                element.center,
+                                ShapeElementOrientation::Clockwise));
+                    ElementToSplit element_info;
+                    element_info.orig_shape_id = shape_pos;
+                    elements_info.push_back(element_info);
+                    elements.push_back(build_circular_arc(
+                                antipode,
+                                element.start,
+                                element.center,
+                                ShapeElementOrientation::Clockwise));
                 } else {
                     elements.push_back(element.reverse());
                 }
@@ -669,6 +706,7 @@ ComputeSplittedElementsOutput compute_splitted_elements(
                 SplittedElement new_element;
                 new_element.element = e;
                 new_element.orig_shape_id = shape_pos;
+                new_element.is_component_bridge = elements_info[element_pos].is_component_bridge;
                 new_element.original_direction = true;
                 output.components_splitted_elements[component_id].push_back(new_element);
 
@@ -697,6 +735,7 @@ ComputeSplittedElementsOutput compute_splitted_elements(
                 SplittedElement new_element;
                 new_element.element = extracted;
                 new_element.orig_shape_id = shape_pos;
+                new_element.is_component_bridge = elements_info[element_pos].is_component_bridge;
                 new_element.original_direction = true;
                 output.components_splitted_elements[component_id].push_back(new_element);
 
@@ -713,6 +752,7 @@ ComputeSplittedElementsOutput compute_splitted_elements(
             SplittedElement new_element;
             new_element.element = element;
             new_element.orig_shape_id = elements_info[element_pos].orig_shape_id;
+            new_element.is_component_bridge = elements_info[element_pos].is_component_bridge;
             new_element.original_direction = true;
             output.components_splitted_elements[component_id].push_back(new_element);
 
@@ -790,7 +830,40 @@ ComputeSplittedElementsOutput compute_splitted_elements(
         ComponentId component_id = *it;
         auto& splitted_elements = output.components_splitted_elements[component_id];
         std::sort(splitted_elements.begin(), splitted_elements.end());
-        splitted_elements.erase(unique(splitted_elements.begin(), splitted_elements.end()), splitted_elements.end());
+        // Keep a single element for each group of identical elements. The
+        // directions in which each shape goes through it are summed: the
+        // element kept is from a shape for which this sum is not zero, in
+        // the direction of this sum, so that the face on its left is inside
+        // this shape. If there is no such shape, the element doesn't
+        // separate the inside from the outside of any shape.
+        std::vector<SplittedElement> unique_splitted_elements;
+        for (ElementPos group_start = 0;
+                group_start < (ElementPos)splitted_elements.size(); ) {
+            ElementPos group_end = group_start + 1;
+            while (group_end < (ElementPos)splitted_elements.size()
+                    && splitted_elements[group_end] == splitted_elements[group_start]) {
+                ++group_end;
+            }
+            SplittedElement splitted_element = splitted_elements[group_start];
+            splitted_element.is_cancelled = true;
+            for (ElementPos pos = group_start; pos < group_end; ++pos) {
+                ShapePos orig_shape_id = splitted_elements[pos].orig_shape_id;
+                Counter sum = 0;
+                for (ElementPos pos_2 = group_start; pos_2 < group_end; ++pos_2) {
+                    if (splitted_elements[pos_2].orig_shape_id != orig_shape_id)
+                        continue;
+                    sum += (splitted_elements[pos_2].original_direction)? 1: -1;
+                }
+                if (sum != 0) {
+                    splitted_element = splitted_elements[pos];
+                    splitted_element.original_direction = (sum > 0);
+                    break;
+                }
+            }
+            unique_splitted_elements.push_back(splitted_element);
+            group_start = group_end;
+        }
+        splitted_elements = unique_splitted_elements;
     }
 
 #ifdef BOOLEAN_OPERATIONS_ENABLE_DEBUG
@@ -895,6 +968,8 @@ BooleanOperationGraph compute_graph(
         SplittedElement splitted_element_reversed;
         splitted_element_reversed.element = splitted_element.element.reverse();
         splitted_element_reversed.orig_shape_id = splitted_element.orig_shape_id;
+        splitted_element_reversed.is_component_bridge = splitted_element.is_component_bridge;
+        splitted_element_reversed.is_cancelled = splitted_element.is_cancelled;
         splitted_element_reversed.original_direction = !splitted_element.original_direction;
         splitted_elements.push_back(splitted_element_reversed);
         graph.arcs.push_back(arc_reversed);
@@ -1070,11 +1145,15 @@ std::vector<ShapeWithHoles> compute_boolean_operation_component(
 
     std::vector<ShapeWithHoles> component_shapes;
     std::vector<ShapePos> component_group_ids;
+    // For the difference and the symmetric difference, whether each shape of
+    // the component is from the first operand.
+    std::vector<uint8_t> component_is_shapes_1;
     for (auto it = cse_output.shape_component_ids.begin(component_id);
             it != cse_output.shape_component_ids.end(component_id);
             ++it) {
         component_shapes.push_back(shapes[*it]);
         component_group_ids.push_back(group_ids.empty()? *it: group_ids[*it]);
+        component_is_shapes_1.push_back(*it < num_shapes_1);
     }
     ShapePos component_num_groups = group_ids.empty()? (ShapePos)shapes.size(): num_groups;
     IntersectionTree intersection_tree(component_shapes, {}, {});
@@ -1191,7 +1270,9 @@ std::vector<ShapeWithHoles> compute_boolean_operation_component(
 #endif
             face.elements.push_back(element_cur);
             element_is_processed[element_cur_pos] = 1;
-            if (splitted_element_cur.original_direction) {
+            if (splitted_element_cur.original_direction
+                    && !splitted_element_cur.is_component_bridge
+                    && !splitted_element_cur.is_cancelled) {
                 ShapePos pos = cse_output.shape_component_ids.position(splitted_element_cur.orig_shape_id);
                 is_inside[pos] = 1;
             }
@@ -1317,16 +1398,7 @@ std::vector<ShapeWithHoles> compute_boolean_operation_component(
             for (ShapePos shape_pos = 0;
                     shape_pos < (ShapePos)component_shapes.size();
                     ++shape_pos) {
-                bool is_in_shapes_1 = false;
-                for (ShapePos shape_1_pos = 0;
-                        shape_1_pos < num_shapes_1;
-                        ++shape_1_pos) {
-                    if (shape_pos == cse_output.shape_component_ids.position(shape_1_pos)) {
-                        is_in_shapes_1 = true;
-                        break;
-                    }
-                }
-                if (is_in_shapes_1)
+                if (component_is_shapes_1[shape_pos])
                     continue;
                 if (is_inside[shape_pos]) {
                     ok = false;
@@ -1348,14 +1420,7 @@ std::vector<ShapeWithHoles> compute_boolean_operation_component(
             bool inside_shapes_1 = false;
             bool inside_shapes_2 = false;
             for (ShapePos shape_pos: intersection_output.shape_ids) {
-                bool is_shapes_1_pos = false;
-                for (ShapePos i = 0; i < num_shapes_1; ++i) {
-                    if (shape_pos == cse_output.shape_component_ids.position(i)) {
-                        is_shapes_1_pos = true;
-                        break;
-                    }
-                }
-                if (is_shapes_1_pos) inside_shapes_1 = true;
+                if (component_is_shapes_1[shape_pos]) inside_shapes_1 = true;
                 else inside_shapes_2 = true;
             }
             if (inside_shapes_1 && !inside_shapes_2) {
@@ -1375,14 +1440,7 @@ std::vector<ShapeWithHoles> compute_boolean_operation_component(
                     ++shape_pos) {
                 if (!is_inside[shape_pos])
                     continue;
-                bool is_shapes_1_pos = false;
-                for (ShapePos i = 0; i < num_shapes_1; ++i) {
-                    if (shape_pos == cse_output.shape_component_ids.position(i)) {
-                        is_shapes_1_pos = true;
-                        break;
-                    }
-                }
-                if (is_shapes_1_pos) fast_inside_1 = true;
+                if (component_is_shapes_1[shape_pos]) fast_inside_1 = true;
                 else fast_inside_2 = true;
             }
             if (fast_inside_1 && fast_inside_2)
@@ -1395,14 +1453,7 @@ std::vector<ShapeWithHoles> compute_boolean_operation_component(
             bool inside_shapes_1 = false;
             bool inside_shapes_2 = false;
             for (ShapePos shape_pos: intersection_output.shape_ids) {
-                bool is_shapes_1_pos = false;
-                for (ShapePos i = 0; i < num_shapes_1; ++i) {
-                    if (shape_pos == cse_output.shape_component_ids.position(i)) {
-                        is_shapes_1_pos = true;
-                        break;
-                    }
-                }
-                if (is_shapes_1_pos) inside_shapes_1 = true;
+                if (component_is_shapes_1[shape_pos]) inside_shapes_1 = true;
                 else inside_shapes_2 = true;
             }
             if (inside_shapes_1 != inside_shapes_2) {
@@ -1483,12 +1534,6 @@ std::vector<ShapeWithHoles> compute_boolean_operation(
         for (ShapePos group_id: group_ids)
             if (group_id + 1 > num_groups)
                 num_groups = group_id + 1;
-    }
-
-    if (boolean_operation == BooleanOperation::SymmetricDifference
-            && num_shapes_1 == 1) {
-        if (cse_output.shape_component_ids.number_of_values() > 1)
-            return output;
     }
 
     // For each connected component.

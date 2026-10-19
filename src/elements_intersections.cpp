@@ -43,32 +43,32 @@ std::pair<bool, Point> shape::compute_line_intersection(
     // perpendicular distances first (unaffected by that amplification)
     // ensures such a case snaps to the existing endpoint instead of
     // computing a slightly-off, spuriously "new" point next to it.
-    } else if (equal(dist_1start_2, 0.0)) {
+    } else if (point_on_line(p11, p21, p22)) {
         //std::cout << "h" << std::endl;
-        if (equal(dist_2start_1, 0.0))
+        if (point_on_line(p21, p11, p12))
             return (std::abs(dist_1start_2) < std::abs(dist_2start_1))?
                 std::pair<bool, Point>{true, p11}:
                 std::pair<bool, Point>{true, p21};
-        if (equal(dist_2end_1, 0.0))
+        if (point_on_line(p22, p11, p12))
             return (std::abs(dist_1start_2) < std::abs(dist_2end_1))?
                 std::pair<bool, Point>{true, p11}:
                 std::pair<bool, Point>{true, p22};
         return {true, p11};
-    } else if (equal(dist_1end_2, 0.0)) {
+    } else if (point_on_line(p12, p21, p22)) {
         //std::cout << "i" << std::endl;
-        if (equal(dist_2start_1, 0.0))
+        if (point_on_line(p21, p11, p12))
             return (std::abs(dist_1end_2) < std::abs(dist_2start_1))?
                 std::pair<bool, Point>{true, p12}:
                 std::pair<bool, Point>{true, p21};
-        if (equal(dist_2end_1, 0.0))
+        if (point_on_line(p22, p11, p12))
             return (std::abs(dist_1end_2) < std::abs(dist_2end_1))?
                 std::pair<bool, Point>{true, p12}:
                 std::pair<bool, Point>{true, p22};
         return {true, p12};
-    } else if (equal(dist_2start_1, 0.0)) {
+    } else if (point_on_line(p21, p11, p12)) {
         //std::cout << "j" << std::endl;
         return {true, p21};
-    } else if (equal(dist_2end_1, 0.0)) {
+    } else if (point_on_line(p22, p11, p12)) {
         //std::cout << "k" << std::endl;
         return {true, p22};
     } else if (p11.x == p12.x) {
@@ -426,6 +426,16 @@ ShapeElementIntersectionsOutput compute_line_line_intersections(
 
     if (line1.contains(p.second) && line2.contains(p.second))
         return {{}, {}, {p.second}};
+
+    // For lines meeting at a shallow angle, the intersection point of the
+    // lines can be outside the segments while an endpoint of a segment is on
+    // the other one within the tolerance.
+    for (const Point& point: {line1.start, line1.end})
+        if (line2.contains(point))
+            return {{}, {point}, {}};
+    for (const Point& point: {line2.start, line2.end})
+        if (line1.contains(point))
+            return {{}, {point}, {}};
     return {};
 }
 
@@ -470,8 +480,8 @@ ShapeElementIntersectionsOutput compute_line_arc_intersections(
             computed_points_valid[1] = false;
     }
     // Line contains arc start.
-    if (!(arc.start == line.start)
-            && !(arc.start == line.end)
+    if (!equal(arc.start, line.start)
+            && !equal(arc.start, line.end)
             && point_on_line(arc.start, line.start, line.end)) {
         end_points.push_back(arc.start);
         if (computed_points.size() >= 1 && equal(computed_points[0], arc.start))
@@ -480,8 +490,8 @@ ShapeElementIntersectionsOutput compute_line_arc_intersections(
             computed_points_valid[1] = false;
     }
     // Line contains arc end.
-    if (!(arc.end == line.start)
-            && !(arc.end == line.end)
+    if (!equal(arc.end, line.start)
+            && !equal(arc.end, line.end)
             && !(arc.end == arc.start)
             && point_on_line(arc.end, line.start, line.end)) {
         end_points.push_back(arc.end);
@@ -520,10 +530,19 @@ ShapeElementIntersectionsOutput compute_arc_arc_intersections(
     std::cout << "recompute_center_1 " << arc.recompute_center().to_string() << std::endl;
     std::cout << "recompute_center_2 " << arc_2.recompute_center().to_string() << std::endl;
 #endif
-    LengthDbl rsq = squared_distance(arc.center, arc.start);
-    LengthDbl r2sq = squared_distance(arc_2.center, arc_2.start);
     if (equal(arc.center, arc_2.center)) {
-        if (equal(rsq, r2sq)) {
+        // The arcs are on the same circle if a point of the second one is on
+        // the circle of the first one. Comparing the squares of their radii
+        // with the tolerance would be too strict for large radii and too
+        // loose for small ones.
+        if (point_on_circle(arc_2.start, arc.center, arc.radius())) {
+            // A full circle overlaps the whole other arc. It can't be
+            // processed like the other arcs below, since it starts and ends
+            // at the same point.
+            if (arc.orientation == ShapeElementOrientation::Full)
+                return {{arc_2}, {}, {}};
+            if (arc_2.orientation == ShapeElementOrientation::Full)
+                return {{arc}, {}, {}};
             if (equal(arc.start, arc_2.start)
                     && equal(arc.end, arc_2.end)) {
                 if (arc.orientation == arc_2.orientation) {
@@ -544,37 +563,39 @@ ShapeElementIntersectionsOutput compute_arc_arc_intersections(
             Point arc1e = (arc.orientation == ShapeElementOrientation::Anticlockwise)? arc.end: arc.start;
             Point arc2s = (arc_2.orientation == ShapeElementOrientation::Anticlockwise)? arc_2.start: arc_2.end;
             Point arc2e = (arc_2.orientation == ShapeElementOrientation::Anticlockwise)? arc_2.end: arc_2.start;
-            Point ref = arc1s - arc.center;
 #ifdef ELEMENTS_INTERSECTIONS_ENABLE_DEBUG
             std::cout << "arc1s " << arc1s.to_string() << std::endl;
             std::cout << "arc1e " << arc1e.to_string() << std::endl;
             std::cout << "arc2s " << arc2s.to_string() << std::endl;
             std::cout << "arc2e " << arc2e.to_string() << std::endl;
 #endif
-            Angle angle_1e = angle_radian(ref, arc1e - arc.center);
-            Angle angle_2s = angle_radian(ref, arc2s - arc.center);
-            Angle angle_2e = angle_radian(ref, arc2e - arc.center);
-#ifdef ELEMENTS_INTERSECTIONS_ENABLE_DEBUG
-            std::cout << "angle_1e " << angle_1e << std::endl;
-            std::cout << "angle_2s " << angle_2s << std::endl;
-            std::cout << "angle_2e " << angle_2e << std::endl;
-#endif
-            if (strictly_greater(angle_2e, angle_2s)) {
-                if (strictly_greater(angle_2s, angle_1e)) {
+            // The positions of the endpoints are compared by checking which
+            // ones are on the other arc, so that the tolerance is the same as
+            // for the points.
+            ShapeElement arc_1_anticlockwise = build_circular_arc(arc1s, arc1e, arc.center, ShapeElementOrientation::Anticlockwise);
+            ShapeElement arc_2_anticlockwise = build_circular_arc(arc2s, arc2e, arc.center, ShapeElementOrientation::Anticlockwise);
+            bool arc2s_on_arc_1 = arc_1_anticlockwise.contains(arc2s);
+            bool arc2e_on_arc_1 = arc_1_anticlockwise.contains(arc2e);
+            // Whether arc 2 goes past the start of arc 1 (possibly ending
+            // there).
+            bool arc_2_goes_past_arc1s = arc_2_anticlockwise.contains(arc1s)
+                && !equal(arc1s, arc2s);
+            if (!arc_2_goes_past_arc1s) {
+                if (!arc2s_on_arc_1) {
                     return {};
-                } else if (strictly_greater(angle_2e, angle_1e)) {
+                } else if (!arc2e_on_arc_1) {
                     if (equal(arc2s, arc1e)) {
                         return {{}, {arc2s}, {}};
                     } else {
                         return {{build_circular_arc(arc2s, arc1e, arc.center, ShapeElementOrientation::Anticlockwise)}, {}, {}};
                     }
                 } else {
-                    return {{build_circular_arc(arc2s, arc2e, arc.center, ShapeElementOrientation::Anticlockwise)}, {}, {}};
+                    return {{arc_2_anticlockwise}, {}, {}};
                 }
             } else {
-                if (strictly_greater(angle_2e, angle_1e)) {
-                    return {{build_circular_arc(arc1s, arc1e, arc.center, ShapeElementOrientation::Anticlockwise)}, {}, {}};
-                } else if (strictly_greater(angle_2s, angle_1e)) {
+                if (!arc2e_on_arc_1) {
+                    return {{arc_1_anticlockwise}, {}, {}};
+                } else if (!arc2s_on_arc_1) {
                     if (equal(arc1s, arc2e)) {
                         return {{}, {arc1s}, {}};
                     } else {
@@ -630,8 +651,8 @@ ShapeElementIntersectionsOutput compute_arc_arc_intersections(
             computed_points_valid[1] = false;
     }
     // Circle 2 contains arc 1 start.
-    if (!(arc.start == arc_2.start)
-            && !(arc.start == arc_2.end)
+    if (!equal(arc.start, arc_2.start)
+            && !equal(arc.start, arc_2.end)
             && point_on_circle(arc.start, arc_2.center, radius_2)) {
         end_points.push_back(arc.start);
         if (computed_points.size() >= 1 && equal(computed_points[0], arc.start))
@@ -640,8 +661,8 @@ ShapeElementIntersectionsOutput compute_arc_arc_intersections(
             computed_points_valid[1] = false;
     }
     // Circle 2 contains arc 1 end.
-    if (!(arc.end == arc_2.start)
-            && !(arc.end == arc_2.end)
+    if (!equal(arc.end, arc_2.start)
+            && !equal(arc.end, arc_2.end)
             && !(arc.end == arc.start)
             && point_on_circle(arc.end, arc_2.center, radius_2)) {
         end_points.push_back(arc.end);

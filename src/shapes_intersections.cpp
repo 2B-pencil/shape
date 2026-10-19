@@ -183,6 +183,29 @@ bool shape::intersect(
         return false;
     }
 
+    // A full circle starts and ends at the same point, so its end can't be
+    // used to process it; process each of its halves instead.
+    if (element.type == ShapeElementType::CircularArc
+            && element.orientation == ShapeElementOrientation::Full) {
+        Point antipode = 2 * element.center - element.start;
+        return intersect(
+                shape,
+                build_circular_arc(
+                    element.start,
+                    antipode,
+                    element.center,
+                    ShapeElementOrientation::Anticlockwise),
+                true)
+            || intersect(
+                shape,
+                build_circular_arc(
+                    antipode,
+                    element.start,
+                    element.center,
+                    ShapeElementOrientation::Anticlockwise),
+                true);
+    }
+
     std::vector<Point> intersection_points;
     std::vector<ShapeElement> overlapping_parts;
     std::vector<std::pair<int, ElementPos>> intersections;
@@ -413,6 +436,7 @@ std::vector<ShapePoint> shape::compute_strict_intersections(
                     }
                     status = 0;
                 }
+                current_point = point;
             }
         }
     }
@@ -793,6 +817,29 @@ bool shape::intersect(
         return false;
     }
 
+    // A full circle starts and ends at the same point, so its end can't be
+    // used to process it; process each of its halves instead.
+    if (element.type == ShapeElementType::CircularArc
+            && element.orientation == ShapeElementOrientation::Full) {
+        Point antipode = 2 * element.center - element.start;
+        return intersect(
+                shape_with_holes,
+                build_circular_arc(
+                    element.start,
+                    antipode,
+                    element.center,
+                    ShapeElementOrientation::Anticlockwise),
+                true)
+            || intersect(
+                shape_with_holes,
+                build_circular_arc(
+                    antipode,
+                    element.start,
+                    element.center,
+                    ShapeElementOrientation::Anticlockwise),
+                true);
+    }
+
     std::vector<Point> intersection_points;
     std::vector<ShapeElement> overlapping_parts;
     std::vector<std::pair<int, ElementPos>> intersections;
@@ -1100,6 +1147,20 @@ void shape::compute_strict_intersections_export_inputs(
     json["path"] = path.to_json();
     json["shape"] = shape.to_json();
     json["only_first"] = only_first;
+    file << std::setw(4) << json << std::endl;
+}
+
+void shape::intersect_export_inputs(
+        const std::string& file_path,
+        const Shape& shape,
+        const ShapeElement& element,
+        bool strict)
+{
+    std::ofstream file{file_path};
+    nlohmann::json json;
+    json["shape"] = shape.to_json();
+    json["element"] = element.to_json();
+    json["strict"] = strict;
     file << std::setw(4) << json << std::endl;
 }
 

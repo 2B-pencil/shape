@@ -49,8 +49,8 @@ TEST_P(ApproximateCircularArcByLineSegmentsTest, ApproximateCircularArcByLineSeg
     for (const ShapeElement& line_segment: line_segments)
         std::cout << line_segment.to_string() << std::endl;
 
-    ASSERT_EQ(line_segments.size(), test_params.number_of_line_segments);
-    for (ElementPos pos = 0; pos < test_params.number_of_line_segments; ++pos) {
+    ASSERT_EQ(line_segments.size(), test_params.expected_line_segments.size());
+    for (ElementPos pos = 0; pos < (ElementPos)line_segments.size(); ++pos) {
         //std::cout << std::setprecision (15) << line_segments[pos].start.x << std::endl;
         EXPECT_TRUE(equal(line_segments[pos], test_params.expected_line_segments[pos]));
     }
@@ -96,12 +96,75 @@ INSTANTIATE_TEST_SUITE_P(
                 3,
                 false,
                 build_shape({{1, 0}, {0.585786437626905, 0}, {0, 0.585786437626905}, {0, 1}}, true).elements,
+            }, {
+                // A full circle requires at least 4 line segments: the
+                // triangle circumscribed to the circle, through its start.
+                "Full1SegOuter",
+                build_circle(1).elements.front(),
+                1,
+                true,
+                build_shape({{1, 0}, {1, sqrt(3)}, {-2, 0}, {1, -sqrt(3)}}).elements,
+            }, {
+                // A full circle requires at least 4 line segments: the
+                // triangle inscribed in the circle.
+                "Full1SegInner",
+                build_circle(1).elements.front(),
+                1,
+                false,
+                build_shape({{1, 0}, {-0.5, sqrt(3) / 2}, {-0.5, -sqrt(3) / 2}}).elements,
             }
         }),
         [](const testing::TestParamInfo<ApproximateCircularArcByLineSegmentsTest::ParamType>& info) {
             return info.param.name;
         });
 
+
+struct ApproximatePathByLineSegmentsTestParams
+{
+    Shape path;
+    LengthDbl segment_length;
+    Shape expected_output;
+};
+
+void PrintTo(const ApproximatePathByLineSegmentsTestParams& params, std::ostream* os)
+{
+    *os << "path " << params.path.to_string(0) << "\n";
+    *os << "segment_length " << params.segment_length << "\n";
+    *os << "expected_output " << params.expected_output.to_string(0) << "\n";
+}
+
+class ApproximatePathByLineSegmentsTest: public testing::TestWithParam<ApproximatePathByLineSegmentsTestParams> { };
+
+TEST_P(ApproximatePathByLineSegmentsTest, ApproximatePathByLineSegments)
+{
+    ApproximatePathByLineSegmentsTestParams test_params = GetParam();
+    PrintTo(test_params, &std::cout);
+    Shape output = approximate_path_by_line_segments(
+            test_params.path,
+            test_params.segment_length);
+    std::cout << "output " << output.to_string(0) << std::endl;
+
+    EXPECT_EQ(output.is_path, test_params.expected_output.is_path);
+    EXPECT_TRUE(equal(output, test_params.expected_output));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+        Shape,
+        ApproximatePathByLineSegmentsTest,
+        testing::ValuesIn(std::vector<ApproximatePathByLineSegmentsTestParams>{
+            {  // 0. Line segments only.
+                build_path({{0, 0}, {1, 0}, {1, 1}}),
+                10,
+                build_path({{0, 0}, {1, 0}, {1, 1}}),
+            }, {  // 1. Line segment and circular arc.
+                build_path({{-1, 0}, {1, 0}, {0, 0, 1}, {0, 1}}),
+                10,
+                build_path({{-1, 0}, {1, 0}, {1, 1}, {0, 1}}),
+            },
+        }),
+        [](const testing::TestParamInfo<ApproximatePathByLineSegmentsTest::ParamType>& info) {
+            return std::to_string(info.index);
+        });
 
 struct ApproximateShapeByLineSegmentsTestParams
 {
@@ -194,10 +257,42 @@ INSTANTIATE_TEST_SUITE_P(
                     build_shape({{1, 0}, {0, 1}, {0, 0}}),
                 },
             },
+            {
+                "CircleOuter",
+                build_circle(1),
+                10,
+                true,
+                {
+                    build_shape({{1, 0}, {1, sqrt(3)}, {-2, 0}, {1, -sqrt(3)}}),
+                },
+            },
+            {
+                "CircleInner",
+                build_circle(1),
+                10,
+                false,
+                {
+                    build_shape({{1, 0}, {-0.5, sqrt(3) / 2}, {-0.5, -sqrt(3) / 2}}),
+                },
+            },
             ApproximateShapeByLineSegmentsTestParams::read_json(
                     (fs::path("data") / "tests" / "approximation" / "approximate_shape_by_line_segments" / "0.json").string()),
             ApproximateShapeByLineSegmentsTestParams::read_json(
                     (fs::path("data") / "tests" / "approximation" / "approximate_shape_by_line_segments" / "1.json").string()),
+            {
+                // The tangents of the clockwise arc cross the bottom edge, so
+                // the approximation falls back to removing the regions
+                // between the arc and its tangents from the shape. Two
+                // triangles of the same area remain, and the first one is
+                // returned.
+                "ClockwiseArcInnerCrossingEdge",
+                build_shape({{-2, 0.5}, {2, 0.5}, {2, 1}, {0, 5, -1}, {-2, 1}}),
+                100,
+                false,
+                {
+                    build_shape({{-1, 0.5}, {-2, 1}, {-2, 0.5}}),
+                },
+            },
         }),
         [](const testing::TestParamInfo<ApproximateShapeByLineSegmentsTest::ParamType>& info) {
             return fs::path(info.param.name).stem().string();

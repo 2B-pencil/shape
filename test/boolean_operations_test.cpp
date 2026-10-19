@@ -478,6 +478,10 @@ INSTANTIATE_TEST_SUITE_P(
                     (fs::path("data") / "tests" / "boolean_operations" / "union" / "039.json").string()),
             ComputeBooleanUnionTestParams::read_json(
                     (fs::path("data") / "tests" / "boolean_operations" / "union" / "040.json").string()),
+            ComputeBooleanUnionTestParams::read_json(
+                    (fs::path("data") / "tests" / "boolean_operations" / "union" / "041.json").string()),
+            ComputeBooleanUnionTestParams::read_json(
+                    (fs::path("data") / "tests" / "boolean_operations" / "union" / "042.json").string()),
         }),
         [](const testing::TestParamInfo<ComputeBooleanUnionTest::ParamType>& info) {
             return fs::path(info.param.name).stem().string();
@@ -591,6 +595,8 @@ INSTANTIATE_TEST_SUITE_P(
                     (fs::path("data") / "tests" / "boolean_operations" / "intersection" / "014.json").string()),
             ComputeBooleanIntersectionTestParams::read_json(
                     (fs::path("data") / "tests" / "boolean_operations" / "intersection" / "015.json").string()),
+            ComputeBooleanIntersectionTestParams::read_json(
+                    (fs::path("data") / "tests" / "boolean_operations" / "intersection" / "016.json").string()),
         }),
         [](const testing::TestParamInfo<ComputeBooleanIntersectionTest::ParamType>& info) {
             return fs::path(info.param.name).stem().string();
@@ -647,7 +653,22 @@ INSTANTIATE_TEST_SUITE_P(
         Shape,
         ComputeBooleanIntersectionMultiShapeTest,
         testing::ValuesIn(std::vector<ComputeBooleanIntersectionMultiShapeTestParams>{
-            {  // Two groups; one group has two disjoint pieces, only parts of
+            {  // A piece of the first group is strictly inside the second
+               // group, which touches the other piece of the first group. The
+               // region between them is not inside the first group.
+                "PieceStrictlyInsideOtherGroup",
+                {
+                    MultiShapeWithHoles{{
+                        {build_rectangle(4, 8, 5, 6)},
+                        {build_rectangle(1, 3, 4, 5)},
+                    }}, MultiShapeWithHoles{{
+                        {build_rectangle(0, 4, 2, 6)},
+                    }},
+                },
+                {
+                    {build_rectangle(1, 3, 4, 5)},
+                },
+            }, {  // Two groups; one group has two disjoint pieces, only parts of
                // which overlap the other group.
                 "TwoGroupsWithDisjointPieces",
                 {
@@ -797,6 +818,8 @@ INSTANTIATE_TEST_SUITE_P(
                     (fs::path("data") / "tests" / "boolean_operations" / "difference" / "005.json").string()),
             ComputeBooleanDifferenceTestParams::read_json(
                     (fs::path("data") / "tests" / "boolean_operations" / "difference" / "006.json").string()),
+            ComputeBooleanDifferenceTestParams::read_json(
+                    (fs::path("data") / "tests" / "boolean_operations" / "difference" / "007.json").string()),
         }),
         [](const testing::TestParamInfo<ComputeBooleanDifferenceTest::ParamType>& info) {
             return fs::path(info.param.name).stem().string();
@@ -882,6 +905,12 @@ INSTANTIATE_TEST_SUITE_P(
             // implemented" (see the JSON fixture's description).
             ComputeBooleanSymmetricDifferenceTestParams::read_json(
                     (fs::path("data") / "tests" / "boolean_operations" / "symmetric_difference" / "001.json").string()),
+            ComputeBooleanSymmetricDifferenceTestParams::read_json(
+                    (fs::path("data") / "tests" / "boolean_operations" / "symmetric_difference" / "002.json").string()),
+            ComputeBooleanSymmetricDifferenceTestParams::read_json(
+                    (fs::path("data") / "tests" / "boolean_operations" / "symmetric_difference" / "003.json").string()),
+            ComputeBooleanSymmetricDifferenceTestParams::read_json(
+                    (fs::path("data") / "tests" / "boolean_operations" / "symmetric_difference" / "004.json").string()),
         }),
         [](const testing::TestParamInfo<ComputeBooleanSymmetricDifferenceTest::ParamType>& info) {
             return fs::path(info.param.name).stem().string();

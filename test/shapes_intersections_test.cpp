@@ -212,10 +212,218 @@ INSTANTIATE_TEST_SUITE_P(
                 build_line_segment({1, 1}, {1, 3}),
                 false,
                 false,
+            }, {
+                "SquareCircleInsideStrict",
+                build_rectangle(-2, 2, -2, 2),
+                build_circle(1).elements.front(),
+                true,
+                true,
+            }, {
+                "SquareCircleCrossingStrict",
+                build_rectangle(-2, 2, -2, 2),
+                build_circle(1).shift(2, 0).elements.front(),
+                true,
+                true,
+            }, {
+                "SquareCircleTangentStrict",
+                build_rectangle(-2, 2, -2, 2),
+                build_circle(1).shift(3, 0).elements.front(),
+                true,
+                false,
+            }, {
+                "SquareCircleOutsideStrict",
+                build_rectangle(-2, 2, -2, 2),
+                build_circle(1).shift(10, 0).elements.front(),
+                true,
+                false,
             },
         }),
         [](const testing::TestParamInfo<IntersectShapeShapeElementTest::ParamType>& info) {
             return fs::path(info.param.name).stem().string();
+        });
+
+
+struct IntersectShapeWithHolesShapeElementTestParams
+{
+    std::string name;
+    ShapeWithHoles shape;
+    ShapeElement element;
+    bool strict = false;
+    bool expected_output;
+
+
+    static IntersectShapeWithHolesShapeElementTestParams read_json(
+            const std::string& file_path)
+    {
+        std::ifstream file(file_path);
+        if (!file.good()) {
+            throw std::runtime_error(
+                    FUNC_SIGNATURE + ": "
+                    "unable to open file \"" + file_path + "\".");
+        }
+
+        nlohmann::json json;
+        file >> json;
+        IntersectShapeWithHolesShapeElementTestParams test_params;
+        test_params.name = file_path;
+        test_params.shape = ShapeWithHoles::from_json(json["shape_with_holes"]);
+        test_params.element = ShapeElement::from_json(json["element"]);
+        test_params.strict = json["strict"];
+        test_params.expected_output = json["expected_output"];
+        return test_params;
+    }
+};
+
+void PrintTo(const IntersectShapeWithHolesShapeElementTestParams& params, std::ostream* os)
+{
+    *os << "shape " << params.shape.to_string(0) << "\n";
+    *os << "element " << params.element.to_string() << "\n";
+    *os << "strict " << params.strict << "\n";
+    *os << "expected_output " << params.expected_output << "\n";
+}
+
+class IntersectShapeWithHolesShapeElementTest: public testing::TestWithParam<IntersectShapeWithHolesShapeElementTestParams> { };
+
+TEST_P(IntersectShapeWithHolesShapeElementTest, IntersectShapeWithHolesShapeElement)
+{
+    IntersectShapeWithHolesShapeElementTestParams test_params = GetParam();
+    PrintTo(test_params, &std::cout);
+
+    bool output = intersect(
+            test_params.shape,
+            test_params.element,
+            test_params.strict);
+    std::cout << "output " << output << std::endl;
+
+    EXPECT_EQ(output, test_params.expected_output);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+        Shape,
+        IntersectShapeWithHolesShapeElementTest,
+        testing::ValuesIn(std::vector<IntersectShapeWithHolesShapeElementTestParams>{
+            {
+                "SegmentInHoleStrict",
+                {build_rectangle(-4, 4, -4, 4), {build_rectangle(-2, 2, -2, 2)}},
+                build_line_segment({-1, 0}, {1, 0}),
+                true,
+                false,
+            }, {
+                "SegmentCrossingHoleStrict",
+                {build_rectangle(-4, 4, -4, 4), {build_rectangle(-2, 2, -2, 2)}},
+                build_line_segment({-1, 0}, {3, 0}),
+                true,
+                true,
+            }, {
+                "CircleInsideStrict",
+                {build_rectangle(-4, 4, -4, 4), {build_rectangle(-2, 2, -2, 2)}},
+                build_circle(0.5).shift(3, 3).elements.front(),
+                true,
+                true,
+            }, {
+                "CircleInHoleStrict",
+                {build_rectangle(-4, 4, -4, 4), {build_rectangle(-2, 2, -2, 2)}},
+                build_circle(1).elements.front(),
+                true,
+                false,
+            },
+            IntersectShapeWithHolesShapeElementTestParams::read_json(
+                    (fs::path("data") / "tests" / "shapes_intersections" / "intersect_shape_with_holes_shape_element" / "0.json").string()),
+        }),
+        [](const testing::TestParamInfo<IntersectShapeWithHolesShapeElementTest::ParamType>& info) {
+            return fs::path(info.param.name).stem().string();
+        });
+
+
+struct ComputeStrictIntersectionsShapeElementTestParams
+{
+    std::string name;
+    ShapeElement element;
+    Shape shape;
+    bool only_first;
+    std::vector<ShapePoint> expected_output;
+};
+
+void PrintTo(const ComputeStrictIntersectionsShapeElementTestParams& params, std::ostream* os)
+{
+    *os << "element " << params.element.to_string() << "\n";
+    *os << "shape " << params.shape.to_string(0) << "\n";
+    *os << "only_first " << params.only_first << "\n";
+    *os << "expected_output\n";
+    for (const ShapePoint& intersection: params.expected_output) {
+        *os << "element_pos " << intersection.element_pos
+            << " point " << intersection.point.to_string() << "\n";
+    }
+}
+
+class ComputeStrictIntersectionsShapeElementTest: public testing::TestWithParam<ComputeStrictIntersectionsShapeElementTestParams> { };
+
+TEST_P(ComputeStrictIntersectionsShapeElementTest, ComputeStrictIntersectionsShapeElement)
+{
+    ComputeStrictIntersectionsShapeElementTestParams test_params = GetParam();
+    PrintTo(test_params, &std::cout);
+
+    std::vector<ShapePoint> output = compute_strict_intersections(
+            test_params.element,
+            test_params.shape,
+            test_params.only_first);
+    std::cout << "output" << std::endl;
+    for (const ShapePoint& intersection: output) {
+        std::cout << "element_pos " << intersection.element_pos
+            << " point " << intersection.point.to_string() << std::endl;
+    }
+
+    ASSERT_EQ(output.size(), test_params.expected_output.size());
+    for (ElementPos pos = 0; pos < (ElementPos)output.size(); ++pos) {
+        EXPECT_EQ(output[pos].element_pos, test_params.expected_output[pos].element_pos);
+        EXPECT_TRUE(equal(output[pos].point, test_params.expected_output[pos].point));
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+        Shape,
+        ComputeStrictIntersectionsShapeElementTest,
+        testing::ValuesIn(std::vector<ComputeStrictIntersectionsShapeElementTestParams>{
+            {
+                "SegmentCrossingSquare",
+                build_line_segment({-1, 0.5}, {2, 0.5}),
+                build_square(1),
+                false,
+                {{3, {0, 0.5}}, {1, {1, 0.5}}},
+            }, {
+                "SegmentCrossingSquareOnlyFirst",
+                build_line_segment({-1, 0.5}, {2, 0.5}),
+                build_square(1),
+                true,
+                {{3, {0, 0.5}}},
+            }, {
+                "SegmentGoingOutOfSquare",
+                build_line_segment({0.5, 0.5}, {2, 0.5}),
+                build_square(1),
+                false,
+                {{1, {1, 0.5}}},
+            }, {
+                "SegmentGoingIntoSquare",
+                build_line_segment({-1, 0.5}, {0.5, 0.5}),
+                build_square(1),
+                false,
+                {{3, {0, 0.5}}},
+            }, {
+                "SegmentTouchingVertex",
+                build_line_segment({-1, 1}, {1, -1}),
+                build_square(1),
+                false,
+                {},
+            }, {
+                "SegmentAlongEdge",
+                build_line_segment({-1, 0}, {2, 0}),
+                build_square(1),
+                false,
+                {},
+            },
+        }),
+        [](const testing::TestParamInfo<ComputeStrictIntersectionsShapeElementTest::ParamType>& info) {
+            return info.param.name;
         });
 
 
@@ -418,19 +626,11 @@ INSTANTIATE_TEST_SUITE_P(
         Shape,
         ComputeStrictIntersectionsPathShapeTest,
         testing::ValuesIn(std::vector<ComputeStrictIntersectionsPathShapeTestParams>{
-            {
-                "ArcLineArcCrossesTriangle",
-                build_path({
-                        build_circular_arc({64, 0}, {192, 128}, {192, 0}, ShapeElementOrientation::Clockwise),
-                        build_line_segment({192, 128}, {704, 128}),
-                        build_circular_arc({704, 128}, {832, 2.842170943040401e-14}, {704, 2.842170943040401e-14}, ShapeElementOrientation::Clockwise)}),
-                build_shape({{384, 320}, {448, -192}, {448, 832}}),
-                true,
-                {{1, 0, {408, 128}}},
-            },
+            ComputeStrictIntersectionsPathShapeTestParams::read_json(
+                    (fs::path("data") / "tests" / "shapes_intersections" / "compute_strict_intersections_path_shape" / "0.json").string()),
         }),
         [](const testing::TestParamInfo<ComputeStrictIntersectionsPathShapeTest::ParamType>& info) {
-            return info.param.name;
+            return fs::path(info.param.name).stem().string();
         });
 
 
@@ -763,17 +963,9 @@ INSTANTIATE_TEST_SUITE_P(
         Shape,
         IntersectShapeWithHolesShapeWithHolesTest,
         testing::ValuesIn(std::vector<IntersectShapeWithHolesShapeWithHolesTestParams>{
-            {
-                "ShapeInHole",
-                {build_shape({{100, 200}, {200, 200}, {200, 400}, {100, 400}})},
-                {
-                    build_shape({{500, 500}, {0, 500}, {0, 0}, {500, 0}}),
-                    {build_shape({{100, 100}, {400, 100}, {400, 400}, {100, 400}})}
-                },
-                true,
-                false,
-            }
+            IntersectShapeWithHolesShapeWithHolesTestParams::read_json(
+                    (fs::path("data") / "tests" / "shapes_intersections" / "intersect_shape_with_holes_shape_with_holes" / "0.json").string()),
         }),
         [](const testing::TestParamInfo<IntersectShapeWithHolesShapeWithHolesTest::ParamType>& info) {
-            return info.param.name;
+            return fs::path(info.param.name).stem().string();
         });

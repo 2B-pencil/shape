@@ -71,12 +71,14 @@ public:
         right_side_decreasing_not_vertical_ = (a_right() < -0);
     }
 
+    /** Translate the generalized trapezoid by 'l' along the y-axis. */
     void shift_top(LengthDbl l)
     {
         yb_ += l;
         yt_ += l;
     }
 
+    /** Translate the generalized trapezoid by 'l' along the x-axis. */
     void shift_right(LengthDbl l)
     {
         xbl_ += l;
@@ -87,6 +89,10 @@ public:
         x_max_ += l;
     }
 
+    /**
+     * Replace the left side of the generalized trapezoid by the vertical
+     * side at x = 'l', which must be on the left of both left corners.
+     */
     void extend_left(LengthDbl l)
     {
         xbl_ = l;
@@ -95,12 +101,18 @@ public:
         left_side_decreasing_not_vertical_ = false;
         left_side_increasing_not_vertical_ = false;
         a_left_ = 0;
+        // The widths and the area change with the left side, as computed in
+        // the constructor.
+        width_top_ = x_top_right() - x_top_left();
+        width_bottom_ = x_bottom_right() - x_bottom_left();
+        area_ = (width_top() + width_bottom()) * height() / 2.0;
     }
 
-    void set_top_covered(bool top_covered) { top_covered_ = top_covered; }
-
-    void set_bottom_covered(bool bottom_covered) { bottom_covered_ = bottom_covered; }
-
+    /**
+     * Return true iff two generalized trapezoids are equal: the
+     * y-coordinates are compared exactly, and the x-coordinates within
+     * tolerance.
+     */
     bool operator==(const GeneralizedTrapezoid& trapezoid) const
     {
         return (y_bottom() == trapezoid.y_bottom()
@@ -151,9 +163,20 @@ public:
     /** Get the area of the generalized trapezoid. */
     inline AreaDbl area() const { return area_; }
 
+    /**
+     * Get the slope of the left side, as the variation of x for a unit
+     * increase of y: 0 if the side is vertical, positive if it goes to the
+     * right going up.
+     */
     inline double a_left() const { return a_left_; }
 
+    /** Get the slope of the right side, in the same way as a_left. */
     inline double a_right() const { return a_right_; }
+
+    /*
+     * Directions of the sides going up: x increasing (to the right) or
+     * decreasing (to the left), the side not being vertical.
+     */
 
     inline bool left_side_increasing_not_vertical() const { return left_side_increasing_not_vertical_; }
 
@@ -162,10 +185,6 @@ public:
     inline bool right_side_increasing_not_vertical() const { return right_side_increasing_not_vertical_; }
 
     inline bool right_side_decreasing_not_vertical() const { return right_side_decreasing_not_vertical_; }
-
-    inline bool top_covered() const { return top_covered_; }
-
-    inline bool bottom_covered() const { return bottom_covered_; }
 
 
     /** Get the x-coordinate of a point on the left side of the trapezoid. */
@@ -192,6 +211,14 @@ public:
         return x_bottom_right() + (y - y_bottom()) * a_right_;
     }
 
+    /**
+     * Get the area of the part of the generalized trapezoid on the right of
+     * the vertical line x = 'x_left', which must be on the right of both left
+     * corners.
+     *
+     * Throw std::invalid_argument if 'x_left' is on the right of both right
+     * corners.
+     */
     AreaDbl area(LengthDbl x_left) const
     {
         if (strictly_greater(x_left, x_bottom_right())) {
@@ -307,6 +334,16 @@ public:
         return std::max(x2br - x1bl, x2tr - x1tl);
     }
 
+    /**
+     * Same as compute_right_shift, but moving the generalized trapezoid along
+     * the direction of slope 'a', towards increasing x: return by how much
+     * its x must increase (its y increasing by 'a' times as much) for it to be
+     * right next to the other generalized trapezoid, that is, the largest
+     * shift at which a vertex of one of them meets a side of the other.
+     *
+     * Return 0 if no such shift exists. 'a' must be non-zero; use
+     * compute_right_shift for a horizontal move.
+     */
     inline LengthDbl compute_top_right_shift(
             const GeneralizedTrapezoid& trapezoid,
             double a) const
@@ -355,6 +392,7 @@ public:
             {
                 double a_left = 1.0 / trapezoid.a_left_;
                 LengthDbl b_left = trapezoid.y_bottom() - a_left * trapezoid.x_bottom_left();
+                bool intersects = true;
                 LengthDbl x = 0;
                 LengthDbl y = 0;
                 if (trapezoid.a_left() == 0) {
@@ -366,8 +404,12 @@ public:
                 } else if (equal(b, b_left)) {
                     x = trapezoid.x_top_left();
                     y = trapezoid.y_top();
+                } else {
+                    // Parallel sides which are not on the same line.
+                    intersects = false;
                 }
-                if (strictly_greater(x, p.x)
+                if (intersects
+                        && strictly_greater(x, p.x)
                         && !strictly_lesser(y, trapezoid.y_bottom())
                         && !strictly_greater(y, trapezoid.y_top())) {
                     //std::cout << "left:"
@@ -382,6 +424,7 @@ public:
             {
                 double a_right = 1.0 / trapezoid.a_right_;
                 LengthDbl b_right = trapezoid.y_bottom() - a_right * trapezoid.x_bottom_right();
+                bool intersects = true;
                 LengthDbl x = 0;
                 LengthDbl y = 0;
                 if (trapezoid.a_right() == 0) {
@@ -393,6 +436,9 @@ public:
                 } else if (equal(b, b_right)) {
                     x = trapezoid.x_top_right();
                     y = trapezoid.y_top();
+                } else {
+                    // Parallel sides which are not on the same line.
+                    intersects = false;
                 }
                 //std::cout << "right:"
                 //    << " b " << b
@@ -404,7 +450,8 @@ public:
                 //    << " x_shift " << x - p.x
                 //    << " y_shift " << y - p.y
                 //    << std::endl;
-                if (strictly_greater(x, p.x)
+                if (intersects
+                        && strictly_greater(x, p.x)
                         && !strictly_lesser(y, trapezoid.y_bottom())
                         && !strictly_greater(y, trapezoid.y_top())) {
                     x_shift = std::max(x_shift, x - p.x);
@@ -454,6 +501,7 @@ public:
             {
                 double a_left = 1.0 / a_left_;
                 LengthDbl b_left = y_bottom() - a_left * x_bottom_left();
+                bool intersects = true;
                 LengthDbl x = 0;
                 LengthDbl y = 0;
                 if (a_left_ == 0) {
@@ -465,13 +513,17 @@ public:
                 } else if (equal(b, b_left)) {
                     x = x_top_left();
                     y = y_top();
+                } else {
+                    // Parallel sides which are not on the same line.
+                    intersects = false;
                 }
                 //std::cout << "left:"
                 //    << " x " << x
                 //    << " x_shift " << p.x - x
                 //    << " y_shift " << p.y - y
                 //    << std::endl;
-                if (strictly_lesser(x, p.x)
+                if (intersects
+                        && strictly_lesser(x, p.x)
                         && !strictly_lesser(y, y_bottom())
                         && !strictly_greater(y, y_top())) {
                     x_shift = std::max(x_shift, p.x - x);
@@ -482,6 +534,7 @@ public:
             {
                 double a_right = 1.0 / a_right_;
                 LengthDbl b_right = y_bottom() - a_right * x_bottom_right();
+                bool intersects = true;
                 LengthDbl x = 0;
                 LengthDbl y = 0;
                 if (a_right_ == 0) {
@@ -493,13 +546,17 @@ public:
                 } else if (equal(b, b_right)) {
                     x = x_top_right();
                     y = y_top();
+                } else {
+                    // Parallel sides which are not on the same line.
+                    intersects = false;
                 }
                 //std::cout << "right:"
                 //    << " x " << x
                 //    << " x_shift " << p.x - x
                 //    << " y_shift " << p.y - y
                 //    << std::endl;
-                if (strictly_lesser(x, p.x)
+                if (intersects
+                        && strictly_lesser(x, p.x)
                         && !strictly_lesser(y, y_bottom())
                         && !strictly_greater(y, y_top())) {
                     x_shift = std::max(x_shift, p.x - x);
@@ -510,6 +567,7 @@ public:
         return x_shift;
     }
 
+    /** Mirror the generalized trapezoid through the x-axis. */
     GeneralizedTrapezoid axial_symmetry_x_axis() const
     {
         return GeneralizedTrapezoid(
@@ -521,6 +579,7 @@ public:
                 x_bottom_right());
     }
 
+    /** Mirror the generalized trapezoid through the y-axis. */
     GeneralizedTrapezoid axial_symmetry_y_axis() const
     {
         return GeneralizedTrapezoid(
@@ -532,12 +591,26 @@ public:
                 -x_top_left());
     }
 
+    /**
+     * Return a copy of the generalized trapezoid whose almost vertical sides
+     * are vertical: each side whose slope (see a_left) is smaller than 1e-2
+     * or greater than 1e2 in absolute value is replaced by the vertical side
+     * through its outermost corner, so that the result contains the
+     * generalized trapezoid.
+     *
+     * The corners of a side are also swapped if its left one is on the right
+     * of its right one.
+     */
     GeneralizedTrapezoid clean() const;
 
     /*
      * Export
      */
 
+    /**
+     * Convert the generalized trapezoid to an anticlockwise polygon of 4
+     * line segments; for a triangle, one of them has a null length.
+     */
     Shape to_shape() const
     {
         Shape shape;
@@ -572,6 +645,10 @@ public:
         return shape;
     }
 
+    /**
+     * Return the SVG of the generalized trapezoid, with the y-axis going up,
+     * its coordinates multiplied by 'factor', filled with 'color'.
+     */
     std::string to_svg(
             const std::string color = "purple",
             double factor = 10) const
@@ -589,6 +666,11 @@ public:
             + "/>\n";
     }
 
+    /**
+     * Read a generalized trapezoid from a JSON object with "y_bottom",
+     * "y_top", "x_bottom_left", "x_bottom_right", "x_top_left" and
+     * "x_top_right".
+     */
     template <class basic_json>
     static GeneralizedTrapezoid from_json(basic_json& json_element)
     {
@@ -601,6 +683,7 @@ public:
                 json_element["x_top_right"]);
     }
 
+    /** Write the generalized trapezoid to a JSON object read by from_json. */
     nlohmann::json to_json() const
     {
         nlohmann::json json;
@@ -643,7 +726,7 @@ private:
     /** Bottom width of the generalized trapezoid. */
     LengthDbl width_bottom_;
 
-    /** Bottom height of the generalized trapezoid. */
+    /** Top width of the generalized trapezoid. */
     LengthDbl width_top_;
 
     /** Smallest x of the generalized trapezoid. */
@@ -668,10 +751,6 @@ private:
     bool right_side_increasing_not_vertical_ = false;
 
     bool right_side_decreasing_not_vertical_ = false;
-
-    bool bottom_covered_ = false;
-
-    bool top_covered_ = false;
 
 };
 

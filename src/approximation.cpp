@@ -12,6 +12,7 @@
 #ifdef APPROXIMATE_ENABLE_DEBUG
 #include <iostream>
 #endif
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 
@@ -57,6 +58,13 @@ std::vector<ShapeElement> shape::approximate_circular_arc_by_line_segments(
     }
     if (angle >= M_PI && number_of_line_segments < 3)
         number_of_line_segments = 3;
+    // For a full circle, 3 line segments would give two tangents at opposite
+    // points of the circle, which are parallel, or a single point of the
+    // circle opposite to the start.
+    if (circular_arc.orientation == ShapeElementOrientation::Full
+            && number_of_line_segments < 4) {
+        number_of_line_segments = 4;
+    }
     //std::cout << "number_of_line_segments " << number_of_line_segments << std::endl;
 
     // Vertices either lie on the circle ('on_circle'), or at the
@@ -169,6 +177,13 @@ std::vector<Shape> compute_circular_arc_extras_outer(
     } else if (angle >= M_PI && number_of_line_segments < 3) {
         number_of_line_segments = 3;
     }
+    // For a full circle, 3 line segments would give two tangents at opposite
+    // points of the circle, which are parallel, or a single point of the
+    // circle opposite to the start.
+    if (circular_arc.orientation == ShapeElementOrientation::Full
+            && number_of_line_segments < 4) {
+        number_of_line_segments = 4;
+    }
 
     std::vector<Shape> output;
     Point point_far_0 = circular_arc.start + (circular_arc.start - circular_arc.center);
@@ -278,6 +293,13 @@ std::vector<Shape> compute_circular_arc_extras_inner(
     //std::cout << "number_of_line_segments " << number_of_line_segments << std::endl;
     if (angle >= M_PI && number_of_line_segments < 3)
         number_of_line_segments = 3;
+    // For a full circle, 3 line segments would give two tangents at opposite
+    // points of the circle, which are parallel, or a single point of the
+    // circle opposite to the start.
+    if (circular_arc.orientation == ShapeElementOrientation::Full
+            && number_of_line_segments < 4) {
+        number_of_line_segments = 4;
+    }
 
     std::vector<Shape> output;
     Point point_far_0 = circular_arc.start + (circular_arc.start - circular_arc.center);
@@ -380,7 +402,11 @@ ShapeWithHoles shape::approximate_shape_by_line_segments(
         return shape_new;
     }
 
-    std::vector<ShapeWithHoles> union_input = {{shape}};
+    // The extras are the regions between the circular arcs and their
+    // approximations. For an outer approximation, they are outside the shape
+    // and are added to it; for an inner approximation, they are inside the
+    // shape and are removed from it.
+    MultiShapeWithHoles extras_union;
 
     for (const ShapeElement& element: shape.elements) {
         switch (element.type) {
@@ -397,15 +423,36 @@ ShapeWithHoles shape::approximate_shape_by_line_segments(
                     element,
                     segment_length);
             for (const Shape& extra: extras)
-                union_input.push_back({extra});
+                extras_union.shapes_with_holes.push_back({extra});
             break;
         }
         }
     }
 
-    //Writer().add_shapes_with_holes(union_input).write_json("union_input.json");
-    std::vector<ShapeWithHoles> union_output = compute_union(union_input).shapes_with_holes;
-    return union_output.front();
+    if (outer) {
+        std::vector<ShapeWithHoles> union_input = extras_union.shapes_with_holes;
+        union_input.push_back({shape});
+        //Writer().add_shapes_with_holes(union_input).write_json("union_input.json");
+        std::vector<ShapeWithHoles> union_output = compute_union(union_input).shapes_with_holes;
+        return union_output.front();
+    }
+
+    // The difference may have several parts; any of them is an inner
+    // approximation, the largest one is returned.
+    std::vector<ShapeWithHoles> difference_output = compute_difference(
+            MultiShapeWithHoles{{{shape}}},
+            extras_union).shapes_with_holes;
+    if (difference_output.empty())
+        return {};
+    return *std::max_element(
+            difference_output.begin(),
+            difference_output.end(),
+            [](
+                const ShapeWithHoles& shape_1,
+                const ShapeWithHoles& shape_2)
+            {
+                return shape_1.compute_area() < shape_2.compute_area();
+            });
 }
 
 Shape shape::approximate_path_by_line_segments(
@@ -424,6 +471,7 @@ Shape shape::approximate_path_by_line_segments(
     path = flatten_arcs(path);
 
     Shape path_new;
+    path_new.is_path = true;
 
     for (const ShapeElement& element: path.elements) {
         switch (element.type) {

@@ -148,10 +148,14 @@ struct NoFitPolygonGeneralTestParams
     // recorded expected_nfp variant is the only practical check.
     bool skip_oracle_check = false;
 
+    // Step of the grid of the oracle check.
+    LengthDbl oracle_step = 0.25;
+
     static NoFitPolygonGeneralTestParams read_json(
             const std::string& file_path,
             const std::string& name,
-            bool skip_oracle_check = false)
+            bool skip_oracle_check = false,
+            LengthDbl oracle_step = 0.25)
     {
         std::ifstream file(file_path);
         if (!file.good()) {
@@ -172,7 +176,7 @@ struct NoFitPolygonGeneralTestParams
                     variant.emplace_back(ShapeWithHoles::from_json(json_shape.value()));
                 test_params.expected_nfp_variants.push_back(std::move(variant));
             }
-        } else {
+        } else if (json.contains("expected_output")) {
             std::vector<ShapeWithHoles> variant;
             for (auto& json_shape: json["expected_output"].items())
                 variant.emplace_back(ShapeWithHoles::from_json(json_shape.value()));
@@ -180,6 +184,7 @@ struct NoFitPolygonGeneralTestParams
         }
         test_params.name = name;
         test_params.skip_oracle_check = skip_oracle_check;
+        test_params.oracle_step = oracle_step;
         return test_params;
     }
 };
@@ -222,7 +227,9 @@ TEST_P(NoFitPolygonGeneralTest, NoFitPolygonGeneral)
             break;
         }
     }
-    EXPECT_TRUE(matches_a_variant)
+    // Without a recorded expected output, only the oracle check below is
+    // done.
+    EXPECT_TRUE(matches_a_variant || test_params.expected_nfp_variants.empty())
         << "nfp did not exactly match any of the "
         << test_params.expected_nfp_variants.size()
         << " recorded expected_output variant(s).";
@@ -252,7 +259,7 @@ TEST_P(NoFitPolygonGeneralTest, NoFitPolygonGeneral)
     };
 
     const double margin = 0.5;
-    const double step = 0.25;
+    const double step = test_params.oracle_step;
     for (double px = aabb.x_min - margin; px <= aabb.x_max + margin; px += step) {
         for (double py = aabb.y_min - margin; py <= aabb.y_max + margin; py += step) {
             Point position = {px, py};
@@ -304,6 +311,25 @@ INSTANTIATE_TEST_SUITE_P(
                 {{{build_shape({{3, 3}, {-1, 3}, {-1, 1}, {0, 1}, {0, -1}, {2, -1}, {2, 1}, {3, 1}}), {}}}},
                 "TShapeAndUnitSquare",
             },
+            // Disks are basic shapes on their own: their NFP with another
+            // basic shape is that shape inflated by their radius. Only the
+            // oracle check is done.
+            {  // Disk fixed, L-shape orbiting.
+                {build_circle(2).shift(1, 1), {}},
+                {build_shape({{0, 0}, {2, 0}, {2, 1}, {1, 1}, {1, 2}, {0, 2}}), {}},
+                {},
+                "DiskAndLShape",
+            }, {  // L-shape fixed, disk orbiting.
+                {build_shape({{0, 0}, {4, 0}, {4, 2}, {2, 2}, {2, 4}, {0, 4}}), {}},
+                {build_circle(1).shift(0.5, -0.5), {}},
+                {},
+                "LShapeAndDisk",
+            }, {  // Two disks.
+                {build_circle(2).shift(1, 1), {}},
+                {build_circle(1).shift(-1, 0.5), {}},
+                {},
+                "TwoDisks",
+            },
             // Regression test for fontanf/packingsolver#558 (test cases 1
             // and 3): the two shapes in 000.json are a real sawtooth strip
             // item (fine repetitive teeth), scaled the way packingsolver
@@ -351,6 +377,16 @@ INSTANTIATE_TEST_SUITE_P(
                     (fs::path("data") / "tests" / "no_fit_polygon" / "000.json").string(),
                     "Issue558SawtoothSelfPairing",
                     /*skip_oracle_check=*/true),
+            // Found via fuzzing: no_fit_polygon used to overflow the stack,
+            // fix_self_intersections and the cleanup of compute_union calling
+            // each other on a degenerate face of almost null area. The
+            // output depends on the rounding of floating-point operations,
+            // so only the oracle check is done.
+            NoFitPolygonGeneralTestParams::read_json(
+                    (fs::path("data") / "tests" / "no_fit_polygon" / "001.json").string(),
+                    "FixSelfIntersectionsRecursion",
+                    /*skip_oracle_check=*/false,
+                    /*oracle_step=*/1.0),
         }),
         [](const testing::TestParamInfo<NoFitPolygonGeneralTest::ParamType>& info) {
             return info.param.name;
@@ -480,6 +516,28 @@ INSTANTIATE_TEST_SUITE_P(
                 build_shape({{0, 0}, {2, 0}, {1, 2}}),
                 build_circular_segment({0, 0}, 1.5, 0, 170),
                 "TriangleAndWideSegment",
+            }, {  // Disk made of quarter arcs, with the floating-point noise of
+                  // cos(pi / 2) on its bottom point: the tangent there is just
+                  // below the direction (1, 0).
+                build_shape({{1, 0}, {0, 0, 1}, {0, 1}, {0, 0, 1}, {-1, 0}, {0, 0, 1}, {-1e-16, -1}, {0, 0, 1}}),
+                build_rectangle(0, 2, 0, 2),
+                "NoisyDiskAndSquare",
+            }, {
+                build_shape({{1, 0}, {0, 0, 1}, {0, 1}, {0, 0, 1}, {-1, 0}, {0, 0, 1}, {-1e-16, -1}, {0, 0, 1}}),
+                build_shape({{-1, 2}, {3, -2}, {3, 2}}),
+                "NoisyDiskAndTriangle",
+            }, {  // Same as orbiting shape, with the noise on its top point,
+                  // whose negated tangent is just below the direction (1, 0).
+                build_rectangle(0, 2, 0, 2),
+                build_shape({{1, 0}, {0, 0, 1}, {1e-16, 1}, {0, 0, 1}, {-1, 0}, {0, 0, 1}, {0, -1}, {0, 0, 1}}),
+                "SquareAndNoisyDisk",
+            }, {  // Arcs split at the directions of the edges of the pentagon
+                  // during the merge: the remainder of an arc starts exactly
+                  // at the direction of the split, so it isn't split there
+                  // again.
+                build_shape({{-2, 0}, {-1, -2}, {3, -2}, {3, 3}, {2, 3}}),
+                build_shape({{1, 0}, {0, 0, 1}, {0, 1}, {0, 0, 1}, {-1, 0}, {0, 0, 1}, {0, -1}, {0, 0, 1}}),
+                "PentagonAndDisk",
             },
         }),
         [](const testing::TestParamInfo<NoFitPolygonArcOracleTest::ParamType>& info) {

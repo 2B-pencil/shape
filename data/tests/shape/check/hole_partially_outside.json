@@ -1,5 +1,5 @@
 {
-    "description": "Regression test for a crash found via random fuzzing of the library with valid shapes, reached through no_fit_polygon() -> decompose_into_basic_shapes() -> compute_convex_partition() -> trapezoidation(). This is the pure-polygon shape decompose_into_basic_shapes() produces internally (after cutting off the original shape's circular segments) before calling trapezoidation() on it. trapezoidation() used to crash: bridge_touching_holes(shape_orig) subtracts each hole that touches the outline from the outline via compute_difference, and for this shape's touching hole that leaves zero shapes (the hole's area consumes the entire outline); trapezoidation() then called .front() on that empty result, segfaulting, instead of treating 'no material left' as a legitimate degenerate case producing no trapezoids (the same way a fully deflated-away shape produces no output from deflate()). expected_output is empty because this is that confirmed-correct degenerate case, not an unknown crash repro.",
+    "description": "Shape whose hole is not entirely inside its outline: about 14% of the area of the hole is outside of it. It was found as a shape built internally by decompose_into_basic_shapes() (after cutting off the circular segments of the original shape, which was not recorded), and used to be a trapezoidation fixture. ShapeWithHoles::check() must reject it.",
     "shape": {
         "elements": [
             {
@@ -1146,6 +1146,5 @@
         ],
         "is_path": false,
         "type": "general"
-    },
-    "expected_output": []
+    }
 }

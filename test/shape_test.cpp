@@ -10,7 +10,9 @@
 
 #include <boost/filesystem.hpp>
 
+#include <algorithm>
 #include <fstream>
+#include <sstream>
 
 
 using namespace shape;
@@ -62,8 +64,84 @@ INSTANTIATE_TEST_SUITE_P(
                 {0.00058755222531203799, 0.00073094802962714311},
                 true,
             },
+            // A vector is not strictly lesser than itself, even when the
+            // cross product is computed with a fused multiply-add.
+            {
+                {0.80978762335406329, 0.5867231076603151},
+                {0.80978762335406329, 0.5867231076603151},
+                false,
+            },
+            {
+                {-0.80978762335406329, -0.5867231076603151},
+                {-0.80978762335406329, -0.5867231076603151},
+                false,
+            },
+            {
+                {0.89070897486398548, -0.4545740006827802},
+                {0.89070897486398548, -0.4545740006827802},
+                false,
+            },
+            // Two horizontal vectors in the same direction have the same
+            // angle, whatever their lengths.
+            {{2, 0}, {1, 0}, false},
+            {{1, 0}, {2, 0}, false},
+            {{-2, 0}, {-1, 0}, false},
+            {{-1, 0}, {-2, 0}, false},
+            // A horizontal vector going right has angle 0, and one going left
+            // has angle pi.
+            {{1, 0}, {-2, 0}, true},
+            {{-2, 0}, {1, 0}, false},
         }),
         [](const testing::TestParamInfo<StrictlyLesserAngleTest::ParamType>& info) {
+            return std::to_string(info.index);
+        });
+
+
+struct PowerOfTwoTestParams
+{
+    LengthDbl value;
+    LengthDbl expected_largest_power_of_two_lesser_or_equal;
+    LengthDbl expected_smallest_power_of_two_greater_or_equal;
+};
+
+void PrintTo(const PowerOfTwoTestParams& params, std::ostream* os)
+{
+    *os << "value " << params.value << "\n";
+    *os << "expected_largest_power_of_two_lesser_or_equal " << params.expected_largest_power_of_two_lesser_or_equal << "\n";
+    *os << "expected_smallest_power_of_two_greater_or_equal " << params.expected_smallest_power_of_two_greater_or_equal << "\n";
+}
+
+class PowerOfTwoTest: public testing::TestWithParam<PowerOfTwoTestParams> { };
+
+TEST_P(PowerOfTwoTest, PowerOfTwo)
+{
+    PowerOfTwoTestParams test_params = GetParam();
+    PrintTo(test_params, &std::cout);
+    // Powers of two are exact in floating-point arithmetic.
+    EXPECT_EQ(
+            largest_power_of_two_lesser_or_equal(test_params.value),
+            test_params.expected_largest_power_of_two_lesser_or_equal);
+    EXPECT_EQ(
+            smallest_power_of_two_greater_or_equal(test_params.value),
+            test_params.expected_smallest_power_of_two_greater_or_equal);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+        Shape,
+        PowerOfTwoTest,
+        testing::ValuesIn(std::vector<PowerOfTwoTestParams>{
+            {0.25, 0.25, 0.25},
+            {0.3, 0.25, 0.5},
+            {0.5, 0.5, 0.5},
+            {0.75, 0.5, 1},
+            {1, 1, 1},
+            {3, 2, 4},
+            {4, 4, 4},
+            {5, 4, 8},
+            {1000, 512, 1024},
+            {1024, 1024, 1024},
+        }),
+        [](const testing::TestParamInfo<PowerOfTwoTest::ParamType>& info) {
             return std::to_string(info.index);
         });
 
@@ -300,6 +378,13 @@ INSTANTIATE_TEST_SUITE_P(
                 {3, {0, 0}},
                 {1, {1, 0.5}},
                 {0, {0.5, 0}},
+            }, {  // point_2 at the start of the element following the element
+                // of point_1, which is the end of the element of point_1: the
+                // point between them is on the element of point_1, not its end.
+                build_shape({{0, 0}, {1, 0}, {1, 1}, {0, 1}}),
+                {0, {0.5, 0}},
+                {1, {1, 0}},
+                {0, {0.75, 0}},
             },
         }),
         [](const testing::TestParamInfo<ShapeFindPointBetweenTest::ParamType>& info) {
@@ -311,11 +396,17 @@ struct ShapeElementMiddleTestParams
 {
     ShapeElement circular_arc;
     Point expected_middle;
+
+    /** Points between which the middle is computed; the start and the end of
+     * the element if empty. */
+    std::vector<Point> points = {};
 };
 
 void PrintTo(const ShapeElementMiddleTestParams& params, std::ostream* os)
 {
     *os << "circular_arc\n" << params.circular_arc.to_string() << "\n";
+    for (const Point& point: params.points)
+        *os << "point " << point.to_string() << "\n";
     *os << "expected_middle\n" << params.expected_middle.to_string() << "\n";
 }
 
@@ -326,7 +417,9 @@ TEST_P(ShapeElementMiddleTest, ShapeElementMiddle)
     ShapeElementMiddleTestParams test_params = GetParam();
     PrintTo(test_params, &std::cout);
 
-    Point middle = test_params.circular_arc.middle();
+    Point middle = (test_params.points.empty())?
+        test_params.circular_arc.middle():
+        test_params.circular_arc.middle(test_params.points[0], test_params.points[1]);
     std::cout << "computed_middle" << std::endl;
     std::cout << middle.to_string() << std::endl;
 
@@ -355,6 +448,25 @@ INSTANTIATE_TEST_SUITE_P(
             }, {
                 build_shape({{-1, 0}, {0, 0, -1}, {0, 1}}, true).elements.front(),
                 {- sqrt(2) / 2, sqrt(2) / 2}
+            }, {
+                build_shape({{0, 1}, {0, 0, 1}, {1, 0}}, true).elements.front(),
+                {-1, 0},
+                {{0, 1}, {0, -1}},
+            }, {
+                build_shape({{1, 0}, {0, 0, -1}, {0, 1}}, true).elements.front(),
+                {0, -1},
+                {{1, 0}, {-1, 0}},
+            }, {
+                build_shape({{1, 0}, {0, 0, -1}, {0, 1}}, true).elements.front(),
+                {-sqrt(2) / 2, -sqrt(2) / 2},
+                {{0, -1}, {-1, 0}},
+            }, {
+                build_circle(1).elements.front(),
+                {-1, 0},
+            }, {
+                build_circle(1).elements.front(),
+                {0, -1},
+                {{-1, 0}, {1, 0}},
             }
         }),
         [](const testing::TestParamInfo<ShapeElementMiddleTest::ParamType>& info) {
@@ -520,6 +632,18 @@ INSTANTIATE_TEST_SUITE_P(
         ShapeElement,
         ShapeElementInCircularArcConeTest,
         testing::ValuesIn(std::vector<ShapeElementInCircularArcConeTestParams>{
+            // The center, apex of the cone.
+            {
+                build_circular_arc({10, 0}, {0, 10}, {0, 0}, ShapeElementOrientation::Anticlockwise),
+                {0, 0},
+                true,
+            },
+            // The center, apex of the cone, of a clockwise arc.
+            {
+                build_circular_arc({10, 0}, {0, -10}, {0, 0}, ShapeElementOrientation::Clockwise),
+                {0, 0},
+                true,
+            },
             // The arc's own start point.
             {
                 build_circular_arc({10, 0}, {0, 10}, {0, 0}, ShapeElementOrientation::Anticlockwise),
@@ -1112,6 +1236,61 @@ INSTANTIATE_TEST_SUITE_P(
         });
 
 
+struct ShapeWithHolesFindPointStrictlyInsideTestParams
+{
+    std::string name;
+    ShapeWithHoles shape;
+};
+
+void PrintTo(const ShapeWithHolesFindPointStrictlyInsideTestParams& params, std::ostream* os)
+{
+    *os << "shape " << params.shape.to_string(0) << "\n";
+}
+
+class ShapeWithHolesFindPointStrictlyInsideTest: public testing::TestWithParam<ShapeWithHolesFindPointStrictlyInsideTestParams> { };
+
+TEST_P(ShapeWithHolesFindPointStrictlyInsideTest, ShapeWithHolesFindPointStrictlyInside)
+{
+    ShapeWithHolesFindPointStrictlyInsideTestParams test_params = GetParam();
+    PrintTo(test_params, &std::cout);
+    Point output = test_params.shape.find_point_strictly_inside();
+    std::cout << "output " << output.to_string() << std::endl;
+    EXPECT_TRUE(test_params.shape.contains(output, true));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+        Shape,
+        ShapeWithHolesFindPointStrictlyInsideTest,
+        testing::ValuesIn(std::vector<ShapeWithHolesFindPointStrictlyInsideTestParams>{
+            {
+                "Rectangle",
+                {build_rectangle(2, 4), {}},
+            }, {
+                "RectangleWithHole",
+                {build_rectangle(0, 10, 0, 10), {build_rectangle(2, 8, 2, 8)}},
+            }, {
+                "CircleWithCircularHole",
+                {build_circle(2), {build_circle(1)}},
+            }, {
+                // The ray at y = 1 is tangent to the bottom of the circular
+                // arc, at (2, 1).
+                "TangentArc",
+                {build_shape({{8, 0}, {10, 0}, {10, 2}, {0, 2}, {0, 1.5}, {1.5, 1.5}, {2, 1.5, 1}, {2.5, 1.5}, {8, 1.5}}), {}},
+            }, {
+                // The ray at y = 5 is tangent to the circular hole, at (5, 5).
+                "TangentHole",
+                {build_rectangle(0, 10, 0, 10), {build_shape({{6, 6}, {5, 6, 1}, {4, 6}, {5, 6, 1}})}},
+            }, {
+                // The ray at y = 5 runs along the bottom edge of the hole.
+                "RayAlongHoleEdge",
+                {build_rectangle(0, 10, 0, 10), {build_rectangle(2, 8, 5, 8)}},
+            },
+        }),
+        [](const testing::TestParamInfo<ShapeWithHolesFindPointStrictlyInsideTest::ParamType>& info) {
+            return info.param.name;
+        });
+
+
 struct ShapeExtractPathTestParams
 {
     Shape shape;
@@ -1173,6 +1352,16 @@ INSTANTIATE_TEST_SUITE_P(
                 {1, {4, 3}},
                 {1, {4, 1}},
                 build_path({{4, 3}, {4, 4}, {0, 4}, {0, 0}, {4, 0}, {4, 1}}),
+            }, {
+                build_circle(1),
+                {0, {1, 0}},
+                {0, {0, 1}},
+                build_path({{1, 0}, {0, 0, 1}, {0, 1}}),
+            }, {
+                build_circle(1),
+                {0, {0, 1}},
+                {0, {1, 0}},
+                build_path({{0, 1}, {0, 0, 1}, {1, 0}}),
             },
         }),
         [](const testing::TestParamInfo<ShapeExtractPathTest::ParamType>& info) {
@@ -1333,10 +1522,357 @@ INSTANTIATE_TEST_SUITE_P(
                 build_shape({{-1, 0}, {1, 0}, {0, 0, 1}}),
                 {1, {0, 1}}, {0, {0, 0}},
                 -1, 0, 0, 1,
+            }, {  // 13. Quarter of a full circle.
+                build_circle(1),
+                {0, {1, 0}}, {0, {0, 1}},
+                0, 0, 1, 1,
             },
         }),
         [](const testing::TestParamInfo<ShapeComputeMinMaxTest::ParamType>& info) {
             return std::to_string(info.index);
+        });
+
+struct ShapeToSvgPathTestParams
+{
+    Shape shape;
+    std::string expected_svg_path;
+};
+
+void PrintTo(const ShapeToSvgPathTestParams& params, std::ostream* os)
+{
+    *os << "shape " << params.shape.to_string(0) << "\n";
+    *os << "expected SVG path " << params.expected_svg_path << "\n";
+}
+
+class ShapeToSvgPathTest: public testing::TestWithParam<ShapeToSvgPathTestParams> { };
+
+TEST_P(ShapeToSvgPathTest, ShapeToSvgPath)
+{
+    ShapeToSvgPathTestParams test_params = GetParam();
+    PrintTo(test_params, &std::cout);
+    std::string svg_path = test_params.shape.to_svg_path();
+    std::cout << "SVG path " << svg_path << std::endl;
+    EXPECT_EQ(svg_path, test_params.expected_svg_path);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+        Shape,
+        ShapeToSvgPathTest,
+        testing::ValuesIn(std::vector<ShapeToSvgPathTestParams>{
+            {  // 0. Closed shape.
+                build_shape({{0, 0}, {1, 0}, {1, 1}}),
+                "M0.000000,-0.000000L1.000000,-0.000000L1.000000,-1.000000L0.000000,-0.000000Z",
+            }, {  // 1. Open path.
+                build_path({{0, 0}, {1, 0}, {1, 1}}),
+                "M0.000000,-0.000000L1.000000,-0.000000L1.000000,-1.000000",
+            }, {  // 2. Anticlockwise quarter circle.
+                build_path({{1, 0}, {0, 0, 1}, {0, 1}}),
+                "M1.000000,-0.000000A1.000000,1.000000,0,0,0,0.000000,-1.000000",
+            }, {  // 3. Anticlockwise three quarters of a circle.
+                build_path({{0, 1}, {0, 0, 1}, {1, 0}}),
+                "M0.000000,-1.000000A1.000000,1.000000,0,1,0,1.000000,-0.000000",
+            }, {  // 4. Clockwise quarter circle.
+                build_path({{0, 1}, {0, 0, -1}, {1, 0}}),
+                "M0.000000,-1.000000A1.000000,1.000000,0,0,1,1.000000,-0.000000",
+            }, {  // 5. Clockwise three quarters of a circle.
+                build_path({{1, 0}, {0, 0, -1}, {0, 1}}),
+                "M1.000000,-0.000000A1.000000,1.000000,0,1,1,0.000000,-1.000000",
+            },
+        }),
+        [](const testing::TestParamInfo<ShapeToSvgPathTest::ParamType>& info) {
+            return std::to_string(info.index);
+        });
+
+struct ShapeWriteSvgTestParams
+{
+    Shape shape;
+};
+
+void PrintTo(const ShapeWriteSvgTestParams& params, std::ostream* os)
+{
+    *os << "shape " << params.shape.to_string(0) << "\n";
+}
+
+class ShapeWriteSvgTest: public testing::TestWithParam<ShapeWriteSvgTestParams> { };
+
+/** Count the occurrences of 'pattern' in the file 'file_path'. */
+Counter count_occurrences(
+        const std::string& file_path,
+        const std::string& pattern)
+{
+    std::ifstream file(file_path);
+    std::stringstream ss;
+    ss << file.rdbuf();
+    std::string content = ss.str();
+    Counter number_of_occurrences = 0;
+    for (std::string::size_type pos = content.find(pattern);
+            pos != std::string::npos;
+            pos = content.find(pattern, pos + 1)) {
+        number_of_occurrences++;
+    }
+    return number_of_occurrences;
+}
+
+TEST_P(ShapeWriteSvgTest, ShapeWriteSvg)
+{
+    ShapeWriteSvgTestParams test_params = GetParam();
+    PrintTo(test_params, &std::cout);
+    // Each test case uses its own file, since they may run in parallel.
+    std::string test_name = testing::UnitTest::GetInstance()->current_test_info()->name();
+    std::replace(test_name.begin(), test_name.end(), '/', '_');
+    std::string file_path = testing::TempDir() + "shape_write_svg_test_" + test_name + ".svg";
+
+    test_params.shape.write_svg(file_path);
+    EXPECT_EQ(count_occurrences(file_path, "<path"), 1);
+    EXPECT_EQ(count_occurrences(file_path, "<path d=\"M"), 1);
+
+    for (const ShapeElement& element: test_params.shape.elements) {
+        element.write_svg(file_path);
+        EXPECT_EQ(count_occurrences(file_path, "<path"), 1);
+        EXPECT_EQ(count_occurrences(file_path, "<path d=\"M"), 1);
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+        Shape,
+        ShapeWriteSvgTest,
+        testing::ValuesIn(std::vector<ShapeWriteSvgTestParams>{
+            {build_shape({{0, 0}, {1, 0}, {1, 1}})},
+            {build_shape({{-1, 0}, {1, 0}, {0, 0, 1}})},
+            {build_circle(1)},
+        }),
+        [](const testing::TestParamInfo<ShapeWriteSvgTest::ParamType>& info) {
+            return std::to_string(info.index);
+        });
+
+struct ShapeWithHolesCheckHolesTestParams
+{
+    std::string name;
+    ShapeWithHoles shape;
+    bool expected_output;
+
+
+    static ShapeWithHolesCheckHolesTestParams read_json(
+            const std::string& file_path,
+            bool expected_output)
+    {
+        std::ifstream file(file_path);
+        if (!file.good()) {
+            throw std::runtime_error(
+                    FUNC_SIGNATURE + ": "
+                    "unable to open file \"" + file_path + "\".");
+        }
+
+        nlohmann::json json;
+        file >> json;
+        ShapeWithHolesCheckHolesTestParams test_params;
+        test_params.name = fs::path(file_path).stem().string();
+        test_params.shape = ShapeWithHoles::from_json(json["shape"]);
+        test_params.expected_output = expected_output;
+        return test_params;
+    }
+};
+
+void PrintTo(const ShapeWithHolesCheckHolesTestParams& params, std::ostream* os)
+{
+    *os << "shape " << params.shape.to_string(1) << "\n";
+    *os << "expected_output " << params.expected_output << "\n";
+}
+
+class ShapeWithHolesCheckHolesTest: public testing::TestWithParam<ShapeWithHolesCheckHolesTestParams> { };
+
+TEST_P(ShapeWithHolesCheckHolesTest, ShapeWithHolesCheckHoles)
+{
+    ShapeWithHolesCheckHolesTestParams test_params = GetParam();
+    PrintTo(test_params, &std::cout);
+    EXPECT_EQ(test_params.shape.check(), test_params.expected_output);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+        Shape,
+        ShapeWithHolesCheckHolesTest,
+        testing::ValuesIn(std::vector<ShapeWithHolesCheckHolesTestParams>{
+            {
+                "HoleInside",
+                {build_rectangle(0, 10, 0, 10), {build_rectangle(2, 8, 2, 8)}},
+                true,
+            }, {
+                "HoleTouchingOutlineAtVertex",
+                {build_rectangle(0, 10, 0, 10), {build_shape({{0, 5}, {5, 2}, {5, 8}})}},
+                true,
+            }, {
+                "HoleTouchingOutlineAlongEdge",
+                {build_rectangle(0, 10, 0, 10), {build_rectangle(0, 2, 2, 4)}},
+                true,
+            }, {
+                // The hole goes out of the outer shape, but the point
+                // strictly inside the hole used to check it is inside the
+                // outer shape.
+                "HoleCrossingOutline",
+                {build_rectangle(0, 10, 0, 10), {build_rectangle(2, 11, 2, 8)}},
+                false,
+            }, {
+                "HoleOutside",
+                {build_rectangle(0, 10, 0, 10), {build_rectangle(12, 14, 2, 8)}},
+                false,
+            },
+            // About 14% of the area of the hole is outside of the outer shape
+            // (formerly a trapezoidation fixture).
+            ShapeWithHolesCheckHolesTestParams::read_json(
+                    (fs::path("data") / "tests" / "shape" / "check" / "hole_partially_outside.json").string(),
+                    false),
+        }),
+        [](const testing::TestParamInfo<ShapeWithHolesCheckHolesTest::ParamType>& info) {
+            return info.param.name;
+        });
+
+struct ShapeCheckTestParams
+{
+    std::string name;
+    Shape shape;
+    bool expected_output;
+};
+
+void PrintTo(const ShapeCheckTestParams& params, std::ostream* os)
+{
+    *os << "shape " << params.shape.to_string(1) << "\n";
+    *os << "expected_output " << params.expected_output << "\n";
+}
+
+class ShapeCheckTest: public testing::TestWithParam<ShapeCheckTestParams> { };
+
+TEST_P(ShapeCheckTest, ShapeCheck)
+{
+    ShapeCheckTestParams test_params = GetParam();
+    PrintTo(test_params, &std::cout);
+    EXPECT_EQ(test_params.shape.check(), test_params.expected_output);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+        Shape,
+        ShapeCheckTest,
+        testing::ValuesIn(std::vector<ShapeCheckTestParams>{
+            {
+                "Square",
+                build_square(1),
+                true,
+            }, {
+                "Path",
+                build_path({{0, 0}, {1, 0}, {1, 1}}),
+                true,
+            }, {
+                "Circle",
+                build_circle(1),
+                true,
+            }, {
+                // The end of the first element is equal to the start of the
+                // second one within tolerance.
+                "SquareWithGapWithinTolerance",
+                build_shape({
+                        build_line_segment({0, 0}, {1, 0}),
+                        build_line_segment({1, 1e-7}, {1, 1}),
+                        build_line_segment({1, 1}, {0, 1}),
+                        build_line_segment({0, 1}, {0, 0})}),
+                true,
+            }, {
+                // The end of the first element isn't the start of the second
+                // one, although the shape is closed and doesn't intersect
+                // itself.
+                "DisconnectedSquare",
+                build_shape({
+                        build_line_segment({0, 0}, {1, 0}),
+                        build_line_segment({1, 0.5}, {1, 1}),
+                        build_line_segment({1, 1}, {0, 1}),
+                        build_line_segment({0, 1}, {0, 0})}),
+                false,
+            }, {
+                "DisconnectedPath",
+                build_path({
+                        build_line_segment({0, 0}, {1, 0}),
+                        build_line_segment({2, 0}, {3, 0})}),
+                false,
+            }, {
+                "NotClosed",
+                build_shape({
+                        build_line_segment({0, 0}, {1, 0}),
+                        build_line_segment({1, 0}, {1, 1}),
+                        build_line_segment({1, 1}, {0, 1})}),
+                false,
+            }, {
+                "Clockwise",
+                build_square(1).reverse(),
+                false,
+            }, {
+                "SelfIntersecting",
+                build_shape({{0, 0}, {1, 1}, {1, 0}, {0, 1}}),
+                false,
+            }, {
+                "Empty",
+                Shape(),
+                false,
+            },
+        }),
+        [](const testing::TestParamInfo<ShapeCheckTest::ParamType>& info) {
+            return info.param.name;
+        });
+
+struct ShapeEqualTestParams
+{
+    std::string name;
+    Shape shape_1;
+    Shape shape_2;
+    bool expected_operator_equal;
+    bool expected_equal;
+};
+
+void PrintTo(const ShapeEqualTestParams& params, std::ostream* os)
+{
+    *os << "shape_1 " << params.shape_1.to_string(1) << "\n";
+    *os << "shape_2 " << params.shape_2.to_string(1) << "\n";
+}
+
+class ShapeEqualTest: public testing::TestWithParam<ShapeEqualTestParams> { };
+
+TEST_P(ShapeEqualTest, ShapeEqual)
+{
+    ShapeEqualTestParams test_params = GetParam();
+    PrintTo(test_params, &std::cout);
+    EXPECT_EQ(test_params.shape_1 == test_params.shape_2, test_params.expected_operator_equal);
+    EXPECT_EQ(equal(test_params.shape_1, test_params.shape_2), test_params.expected_equal);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+        Shape,
+        ShapeEqualTest,
+        testing::ValuesIn(std::vector<ShapeEqualTestParams>{
+            {
+                "RotatedSquare",
+                build_shape({{0, 0}, {1, 0}, {1, 1}, {0, 1}}),
+                build_shape({{1, 1}, {0, 1}, {0, 0}, {1, 0}}),
+                true,
+                true,
+            }, {
+                "ShapeAndPath",
+                build_shape({{0, 0}, {1, 0}, {1, 1}, {0, 1}}),
+                build_path({{0, 0}, {1, 0}, {1, 1}, {0, 1}, {0, 0}}),
+                false,
+                false,
+            }, {
+                "RotatedPath",
+                build_path({{0, 0}, {1, 0}, {1, 1}, {0, 1}, {0, 0}}),
+                build_path({{1, 1}, {0, 1}, {0, 0}, {1, 0}, {1, 1}}),
+                false,
+                false,
+            }, {
+                "SquareWithinTolerance",
+                build_shape({{0, 0}, {1, 0}, {1, 1}, {0, 1}}),
+                build_shape({{0, 0}, {1 + 1e-7, 0}, {1, 1}, {0, 1}}),
+                false,
+                true,
+            },
+        }),
+        [](const testing::TestParamInfo<ShapeEqualTest::ParamType>& info) {
+            return info.param.name;
         });
 
 TEST(ShapeWithHolesCheckTest, RejectsHoleNotContainedInOuterShape)

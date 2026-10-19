@@ -2,6 +2,7 @@
 
 #include "shape/elements_intersections.hpp"
 #include "shape/shapes_intersections.hpp"
+#include "shape/intersection_tree.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -19,7 +20,7 @@ LengthDbl shape::largest_power_of_two_lesser_or_equal(LengthDbl value)
         while (res > value)
             res /= 2;
     } else {
-        while (res * 2 < value)
+        while (res * 2 <= value)
             res *= 2;
     }
     return res;
@@ -32,7 +33,7 @@ LengthDbl shape::smallest_power_of_two_greater_or_equal(LengthDbl value)
         while (res < value)
             res *= 2;
     } else {
-        while (res / 2 > value)
+        while (res / 2 >= value)
             res /= 2;
     }
     return res;
@@ -79,18 +80,15 @@ nlohmann::json Point::to_json() const
     return json;
 }
 
-std::string Point::to_svg() const
+std::string Point::to_svg(LengthDbl radius) const
 {
-    std::string s = "<path d=\"";
-    s += "M" + std::to_string(this->x) + "," + std::to_string(this->y);
-    s += "\""
-        " stroke=\"black\""
-        " stroke-width=\"0.1\"";
-    //if (!fill_color.empty()) {
-    //    s += " fill=\"" + fill_color + "\""
-    //        " fill-opacity=\"0.2\"";
-    //}
-    s += "/>\n";
+    // A path made of a single point isn't drawn: draw a disk instead.
+    std::string s = "<circle"
+        " cx=\"" + std::to_string(this->x) + "\""
+        " cy=\"" + std::to_string(-this->y) + "\""
+        " r=\"" + std::to_string(radius) + "\""
+        " fill=\"black\""
+        "/>\n";
     return s;
 }
 
@@ -283,16 +281,22 @@ Point ShapeElement::middle(
         point.y = (point_1.y + point_2.y) / 2;
         return point;
     } case ShapeElementType::CircularArc: {
-        if (this->orientation == ShapeElementOrientation::Anticlockwise) {
+        if (this->orientation == ShapeElementOrientation::Clockwise) {
+            Angle angle = angle_radian(
+                    point_2 - this->center,
+                    point_1 - this->center);
+            return point_2.rotate_radians(this->center, angle / 2.);
+        } else {
             Angle angle = angle_radian(
                     point_1 - this->center,
                     point_2 - this->center);
+            // On a full circle, the middle between a point and itself is the
+            // opposite point.
+            if (this->orientation == ShapeElementOrientation::Full
+                    && equal(point_1, point_2)) {
+                angle = 2 * M_PI;
+            }
             return point_1.rotate_radians(this->center, angle / 2.);
-        } else {
-            Angle angle = angle_radian(
-                this->end - this->center,
-                this->start - this->center);
-            return point_2.rotate_radians(this->center, angle / 2.);
         }
     }
     }
@@ -439,7 +443,7 @@ ShapeElement ShapeElement::extract(
             element.start = start_point;
             element.end = end_point;
             return element;
-        } else if (!equal(this->start, this->end)) {
+        } else if (!equal(start_point, end_point)) {
             ShapeElement element = *this;
             element.orientation = ShapeElementOrientation::Anticlockwise;
             element.start = start_point;
@@ -493,10 +497,14 @@ bool shape::strictly_lesser_angle(
         return true;
     if (vector_1.y < 0 && vector_2.y >= 0)
         return false;
+    // Both vectors are horizontal: a vector going right has angle 0 and a
+    // vector going left has angle pi, whatever their lengths.
     if (vector_1.y == 0 && vector_2.y == 0)
-        return (vector_1.x > vector_2.x);
-    LengthDbl v = vector_1.x * vector_2.y - vector_1.y * vector_2.x;
-    return (v > 0);
+        return (vector_1.x >= 0 && vector_2.x < 0);
+    // The products are compared rather than subtracted: with a fused
+    // multiply-add, the difference of the products would be nonzero for two
+    // equal vectors, and a vector could be strictly lesser than itself.
+    return vector_1.x * vector_2.y > vector_1.y * vector_2.x;
 }
 
 bool shape::strictly_greater_angle(
@@ -524,6 +532,10 @@ bool ShapeElement::in_circular_arc_cone(const Point& point) const
     // still matches this->point(l) once clamped iff 'point''s direction was
     // already within [0, this->length()]; if it wasn't, clamping moves
     // this->point(l) away from it, landing on start or end instead.
+    // The center is the apex of the cone, which contains it. It has no
+    // direction from the center to project along.
+    if (equal(point, this->center))
+        return true;
     LengthDbl l = (std::max)(0.0, (std::min)(this->length(), this->length(point)));
     LengthDbl point_distance = distance(this->center, point);
     Point radial_projection = this->center + (this->radius() / point_distance) * (point - this->center);
@@ -847,8 +859,12 @@ std::string ShapeElement::to_svg() const
             s += "L";
         } else {
             LengthDbl radius = this->radius();
+            // 'theta' is measured anticlockwise with the y-axis flipped, so it is
+            // the clockwise angle from the start to the end of the arc.
             Angle theta = angle_radian(start - center, end - center);
-            int large_arc_flag = (theta > M_PI)? 0: 1;
+            Angle arc_angle = (this->orientation == ShapeElementOrientation::Anticlockwise)?
+                2 * M_PI - theta: theta;
+            int large_arc_flag = (arc_angle > M_PI)? 1: 0;
             int sweep_flag = (this->orientation == ShapeElementOrientation::Anticlockwise)? 0: 1;
             s += "A" + std::to_string(radius) + ","
                 + std::to_string(radius) + ",0,"
@@ -890,12 +906,7 @@ void ShapeElement::write_svg(
         + "\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\">\n";
     file << s;
 
-    file << "<path d=\"" << to_svg() << "\""
-        << " stroke=\"black\""
-        << " stroke-width=\"0.1\""
-        << " fill=\"blue\""
-        << " fill-opacity=\"0.2\""
-        << "/>" << std::endl;
+    file << to_svg();
 
     file << "</svg>" << std::endl;
 }
@@ -1515,18 +1526,27 @@ ShapePoint Shape::find_point_between(
     }
 
     const ShapeElement& element_1 = this->elements[point_1.element_pos];
-    if (point_1.element_pos == point_2.element_pos) {
+    if (point_1.element_pos == point_2.element_pos
+            && strictly_lesser(
+                element_1.length(point_1.point),
+                element_1.length(point_2.point))) {
         return {point_1.element_pos, element_1.find_point_between(point_1.point, point_2.point)};
-    } else if (!equal(point_1.point, element_1.end)) {
-        return {point_1.element_pos, element_1.end};
-    } else {
-        ElementPos element_next_pos = (point_1.element_pos + 1) % (ElementPos)this->elements.size();
-        const ShapeElement& element_next = this->elements[element_next_pos];
-        LengthDbl l_next = (point_2.element_pos == element_next_pos)?
-            element_next.length(point_2.point):
-            element_next.length();
-        return {element_next_pos, element_next.point(l_next / 2)};
     }
+
+    // From here, the points between point_1 and point_2 go through the end
+    // of the element of point_1.
+    if (this->elements.size() == 1) {
+        // The shape is a full circle; go through its start.
+        ShapeElement arc = element_1.extract(point_1.point, point_2.point);
+        return {point_1.element_pos, arc.middle()};
+    }
+    if (!equal(point_1.point, element_1.end))
+        return {point_1.element_pos, element_1.find_point_between(point_1.point, element_1.end)};
+
+    // point_1 is at the end of its element; continue from the start of the
+    // next element.
+    ElementPos element_next_pos = (point_1.element_pos + 1) % (ElementPos)this->elements.size();
+    return find_point_between({element_next_pos, this->elements[element_next_pos].start}, point_2);
 }
 
 Point ShapeElement::tangent(
@@ -1675,11 +1695,15 @@ Shape Shape::extract_path(
             path.elements.push_back(this->elements[pos]);
         }
         // Last partial element: from start of its element to point_end.point.
+        // The start is checked first since a full circle starts and ends at
+        // the same point.
         const ShapeElement& element_end = this->elements[point_end.element_pos];
-        if (equal(point_end.point, element_end.end)) {
-            path.elements.push_back(element_end);
-        } else if (!equal(point_end.point, element_end.start)) {
-            path.elements.push_back(element_end.extract(element_end.start, point_end.point));
+        if (!equal(point_end.point, element_end.start)) {
+            if (equal(point_end.point, element_end.end)) {
+                path.elements.push_back(element_end);
+            } else {
+                path.elements.push_back(element_end.extract(element_end.start, point_end.point));
+            }
         }
     }
 
@@ -1825,6 +1849,19 @@ bool Shape::check() const
     if (elements.empty())
         return false;
 
+    // Check that the end of each element is the start of the next one.
+    for (ElementPos element_pos = 0;
+            element_pos + 1 < (ElementPos)this->elements.size();
+            ++element_pos) {
+        if (!equal(
+                    this->elements[element_pos].end,
+                    this->elements[element_pos + 1].start)) {
+            std::cout << this->to_string(1) << std::endl;
+            std::cout << "shape is not connected at element " << element_pos << "." << std::endl;
+            return false;
+        }
+    }
+
     // If the shape is not a path, check that it is closed.
     if (!this->is_path) {
         if (!equal(this->elements.back().end, this->elements.front().start)) {
@@ -1953,8 +1990,12 @@ std::string Shape::to_svg_path() const
                 s += "L";
             } else {
                 LengthDbl radius = element.radius();
+                // 'theta' is measured anticlockwise with the y-axis flipped, so it is
+                // the clockwise angle from the start to the end of the arc.
                 Angle theta = angle_radian(start - center, end - center);
-                int large_arc_flag = (theta > M_PI)? 0: 1;
+                Angle arc_angle = (element.orientation == ShapeElementOrientation::Anticlockwise)?
+                    2 * M_PI - theta: theta;
+                int large_arc_flag = (arc_angle > M_PI)? 1: 0;
                 int sweep_flag = (element.orientation == ShapeElementOrientation::Anticlockwise)? 0: 1;
                 s += "A" + std::to_string(radius) + ","
                     + std::to_string(radius) + ",0,"
@@ -1962,8 +2003,8 @@ std::string Shape::to_svg_path() const
                     + std::to_string(sweep_flag) + ",";
             }
         }
-        s += std::to_string(elements.front().start.x)
-            + "," + std::to_string(-(elements.front().start.y));
+        s += std::to_string(elements.back().end.x)
+            + "," + std::to_string(-(elements.back().end.y));
         if (!this->is_path)
             s += "Z";
     }
@@ -2010,12 +2051,7 @@ void Shape::write_svg(
         + "\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\">\n";
     file << s;
 
-    file << "<path d=\"" << to_svg() << "\""
-        << " stroke=\"black\""
-        << " stroke-width=\"0.1\""
-        << " fill=\"blue\""
-        << " fill-opacity=\"0.2\""
-        << "/>" << std::endl;
+    file << to_svg("blue");
 
     file << "</svg>" << std::endl;
 }
@@ -2156,6 +2192,7 @@ bool ShapeWithHoles::check() const
     if (!this->shape.check())
         return false;
 
+    IntersectionTree outline_tree({}, this->shape.elements, {});
     for (ShapePos hole_pos = 0;
             hole_pos < (ShapePos)this->holes.size();
             ++hole_pos) {
@@ -2171,6 +2208,49 @@ bool ShapeWithHoles::check() const
             std::cout << this->to_string(1) << std::endl;
             std::cout << "hole " << hole_pos << " is not inside the outer shape." << std::endl;
             return false;
+        }
+
+        // If the boundary of the hole doesn't touch the outer boundary, the
+        // hole is entirely inside or entirely outside of the outer shape, and
+        // the check above is enough. Otherwise, the hole could still go out
+        // of the outer shape where it touches it: each element of the hole
+        // touching the outer boundary is split where it touches it, and each
+        // piece must be inside the outer shape (or on its boundary).
+        for (const ShapeElement& element: hole.elements) {
+            IntersectionTree::IntersectOutput intersect_output = outline_tree.intersect(element, false);
+            if (intersect_output.element_ids.empty())
+                continue;
+            std::vector<Point> points = {element.start, element.end};
+            for (ElementPos outline_element_pos: intersect_output.element_ids) {
+                ShapeElementIntersectionsOutput intersections = compute_intersections(
+                        element,
+                        this->shape.elements[outline_element_pos]);
+                for (const ShapeElement& overlapping_part: intersections.overlapping_parts) {
+                    points.push_back(overlapping_part.start);
+                    points.push_back(overlapping_part.end);
+                }
+                for (const Point& point: intersections.improper_intersections)
+                    points.push_back(point);
+                for (const Point& point: intersections.proper_intersections)
+                    points.push_back(point);
+            }
+            std::sort(
+                    points.begin(),
+                    points.end(),
+                    [&element](const Point& point_1, const Point& point_2)
+                    {
+                        return element.length(point_1) < element.length(point_2);
+                    });
+            for (ElementPos pos = 0; pos + 1 < (ElementPos)points.size(); ++pos) {
+                if (equal(points[pos], points[pos + 1]))
+                    continue;
+                Point point = element.find_point_between(points[pos], points[pos + 1]);
+                if (!this->shape.contains(point)) {
+                    std::cout << this->to_string(1) << std::endl;
+                    std::cout << "hole " << hole_pos << " is not inside the outer shape." << std::endl;
+                    return false;
+                }
+            }
         }
     }
 
@@ -2265,61 +2345,77 @@ Point ShapeWithHoles::find_point_strictly_inside() const
     for (Counter k = 2; k < 8; ++k) {
         for (Counter k2 = 1; k2 < k; ++k2) {
             LengthDbl y = aabb.y_min + (aabb.y_max - aabb.y_min) * k2 / k;
-            Point point_min_1 = {
-                std::numeric_limits<LengthDbl>::infinity(),
-                std::numeric_limits<LengthDbl>::infinity()};
-            Point point_min_2 = {
-                std::numeric_limits<LengthDbl>::infinity(),
-                std::numeric_limits<LengthDbl>::infinity()};
-            ShapeElement ray;
-            ray.type = ShapeElementType::LineSegment;
-            ray.start.x = aabb.x_min - 1;
-            ray.start.y = y;
-            ray.end.x = aabb.x_max + 1;
-            ray.end.y = y;
+
+            // Every touch of the boundary at this height (see
+            // ShapeElement::ray_crossings), crossing or not: a candidate
+            // gap must be bounded by two touches with nothing else between
+            // them, so its interior cannot coincide with any boundary
+            // feature (a reflex vertex, an arc tangent to this height, ...).
+            std::vector<RayCrossing> touches;
+            // Horizontal edges lying exactly along this height: every point
+            // in such an interval is on the boundary regardless of
+            // ray-casting parity, so no candidate gap may overlap one.
+            std::vector<std::pair<LengthDbl, LengthDbl>> forbidden_intervals;
             for (ShapePos shape_pos = -1;
                     shape_pos < (ShapePos)this->holes.size();
                     ++shape_pos) {
                 const Shape& shape = (shape_pos == -1)?
                     this->shape:
                     this->holes[shape_pos];
-                for (ElementPos element_pos = 0;
-                        element_pos < shape.elements.size();
-                        ++element_pos) {
-                    const ShapeElement& element = shape.elements[element_pos];
-                    ShapeElementIntersectionsOutput intersections = compute_intersections(ray, element);
-                    for (const ShapeElement& overlapping_part: intersections.overlapping_parts) {
-                        const Point& intersection = (overlapping_part.start.x < overlapping_part.end.x)?
-                            overlapping_part.start:
-                            overlapping_part.end;
-                        if (!strictly_lesser(point_min_1.x, intersection.x)) {
-                            point_min_2 = intersection;
-                            point_min_1 = intersection;
-                        } else if (!strictly_lesser(point_min_2.x, intersection.x)) {
-                            point_min_2 = intersection;
-                        }
-                    }
-                    for (const Point& intersection: intersections.improper_intersections) {
-                        if (!strictly_lesser(point_min_1.x, intersection.x)) {
-                            point_min_2 = point_min_1;
-                            point_min_1 = intersection;
-                        } else if (!strictly_lesser(point_min_2.x, intersection.x)) {
-                            point_min_2 = intersection;
-                        }
-                    }
-                    for (const Point& intersection: intersections.proper_intersections) {
-                        if (!strictly_lesser(point_min_1.x, intersection.x)) {
-                            point_min_2 = point_min_1;
-                            point_min_1 = intersection;
-                        } else if (!strictly_lesser(point_min_2.x, intersection.x)) {
-                            point_min_2 = intersection;
-                        }
+                for (const ShapeElement& element: shape.elements) {
+                    for (const RayCrossing& touch: element.ray_crossings(y))
+                        touches.push_back(touch);
+                    LengthDbl x_min, x_max;
+                    if (element.ray_horizontal_extent(y, x_min, x_max)) {
+                        forbidden_intervals.push_back({x_min, x_max});
+                        touches.push_back({x_min, false});
+                        touches.push_back({x_max, false});
                     }
                 }
             }
-            if (equal(point_min_1.x, point_min_2.x))
-                continue;
-            return {(point_min_1.x + point_min_2.x) / 2, y};
+            std::sort(
+                    touches.begin(),
+                    touches.end(),
+                    [](const RayCrossing& touch_1, const RayCrossing& touch_2)
+                    { return touch_1.x < touch_2.x; });
+
+            // Walk the touches left to right, merging those at the same x
+            // and keeping a running parity that flips at every genuine
+            // crossing: the gap that follows a cluster is strictly inside
+            // the shape exactly when that parity is odd there, unless it
+            // falls inside a forbidden interval.
+            bool inside = false;
+            for (ElementPos cluster_start = 0;
+                    cluster_start < (ElementPos)touches.size(); ) {
+                ElementPos cluster_end = cluster_start;
+                bool flips = false;
+                while (cluster_end < (ElementPos)touches.size()
+                        && equal(touches[cluster_end].x, touches[cluster_start].x)) {
+                    if (touches[cluster_end].is_crossing)
+                        flips = !flips;
+                    ++cluster_end;
+                }
+                if (flips)
+                    inside = !inside;
+
+                if (inside && cluster_end < (ElementPos)touches.size()) {
+                    LengthDbl x_left = touches[cluster_start].x;
+                    LengthDbl x_right = touches[cluster_end].x;
+                    LengthDbl mid = (x_left + x_right) / 2;
+                    bool forbidden = false;
+                    for (const auto& interval: forbidden_intervals) {
+                        if (!strictly_lesser(mid, interval.first)
+                                && !strictly_greater(mid, interval.second)) {
+                            forbidden = true;
+                            break;
+                        }
+                    }
+                    if (!forbidden)
+                        return {mid, y};
+                }
+
+                cluster_start = cluster_end;
+            }
         }
     }
     return this->shape.elements.front().start;
@@ -2552,7 +2648,10 @@ bool shape::operator==(
         const Shape& shape_1,
         const Shape& shape_2)
 {
-    // First, check if both shapes have the same number of elements.
+    // First, check if both shapes are of the same kind and have the same
+    // number of elements.
+    if (shape_1.is_path != shape_2.is_path)
+        return false;
     if (shape_1.elements.size() != shape_2.elements.size())
         return false;
 
@@ -2566,6 +2665,11 @@ bool shape::operator==(
         }
     }
     if (offset == -1)
+        return false;
+    // A path starts at its first element. A closed shape may start at any of
+    // its elements, but since a valid shape doesn't go through the same
+    // element twice, the element found is the only possible start.
+    if (shape_1.is_path && offset != 0)
         return false;
 
     for (ElementPos element_pos = 0;
@@ -2584,7 +2688,10 @@ bool shape::equal(
         const Shape& shape_1,
         const Shape& shape_2)
 {
-    // First, check if both shapes have the same number of elements.
+    // First, check if both shapes are of the same kind and have the same
+    // number of elements.
+    if (shape_1.is_path != shape_2.is_path)
+        return false;
     if (shape_1.elements.size() != shape_2.elements.size())
         return false;
 
@@ -2598,6 +2705,11 @@ bool shape::equal(
         }
     }
     if (offset == -1)
+        return false;
+    // A path starts at its first element. A closed shape may start at any of
+    // its elements, but since a valid shape doesn't go through the same
+    // element twice, the element found is the only possible start.
+    if (shape_1.is_path && offset != 0)
         return false;
 
     for (ElementPos element_pos = 0;

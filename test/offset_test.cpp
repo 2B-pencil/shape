@@ -306,6 +306,10 @@ INSTANTIATE_TEST_SUITE_P(
                     (fs::path("data") / "tests" / "offset" / "inflate" / "022.json").string()),
             InflateShapeWithHolesTestParams::read_json(
                     (fs::path("data") / "tests" / "offset" / "inflate" / "023.json").string()),
+            InflateShapeWithHolesTestParams::read_json(
+                    (fs::path("data") / "tests" / "offset" / "inflate" / "024.json").string()),
+            InflateShapeWithHolesTestParams::read_json(
+                    (fs::path("data") / "tests" / "offset" / "inflate" / "025.json").string()),
         }),
         [](const testing::TestParamInfo<InflateShapeWithHolesTest::ParamType>& info) {
             return fs::path(info.param.name).stem().string();
@@ -392,6 +396,12 @@ INSTANTIATE_TEST_SUITE_P(
             // description for the confirmed root cause and fix.
             DeflateTestParams::read_json(
                     (fs::path("data") / "tests" / "offset" / "deflate" / "001.json").string()),
+            DeflateTestParams::read_json(
+                    (fs::path("data") / "tests" / "offset" / "deflate" / "002.json").string()),
+            DeflateTestParams::read_json(
+                    (fs::path("data") / "tests" / "offset" / "deflate" / "003.json").string()),
+            DeflateTestParams::read_json(
+                    (fs::path("data") / "tests" / "offset" / "deflate" / "004.json").string()),
         }),
         [](const testing::TestParamInfo<DeflateTest::ParamType>& info) {
             return fs::path(info.param.name).stem().string();

@@ -17,6 +17,25 @@ using namespace shape;
 namespace
 {
 
+/**
+ * Whether the end of 'element' is aligned with the start of 'element' and the
+ * end of 'element_next', that is, removing it moves the boundary by less than
+ * the tolerance. Comparing the angle at this vertex with pi isn't enough: a
+ * small angle can still move the boundary by much more than the tolerance
+ * along long elements.
+ */
+bool is_vertex_aligned(
+        const ShapeElement& element,
+        const ShapeElement& element_next)
+{
+    Point direction = element_next.end - element.start;
+    LengthDbl length = norm(direction);
+    if (length == 0.0)
+        return false;
+    LengthDbl distance = std::abs(cross_product(direction, element.end - element.start)) / length;
+    return !strictly_greater(distance, 0.0);
+}
+
 struct ApproximatedElementKey
 {
     ShapePos approximated_shape_pos = -1;
@@ -139,8 +158,7 @@ AreaDbl compute_approximation_cost(
 
     if (shape.outer) {
         // Outer approximation.
-        //if (angle_next == M_PI) {
-        if (equal(angle_next, M_PI)) {
+        if (is_vertex_aligned(element.element, element_next.element)) {
             return 0.0;
         } else if (angle_next > M_PI) {
             if (angle_prev > M_PI) {
@@ -194,8 +212,7 @@ AreaDbl compute_approximation_cost(
         }
     } else {
         // Inner approximation.
-        //if (angle_next == M_PI) {
-        if (equal(angle_next, M_PI)) {
+        if (is_vertex_aligned(element.element, element_next.element)) {
             return 0.0;
         } else if (angle_next < M_PI) {
             if (angle_prev < M_PI) {
@@ -266,8 +283,7 @@ void apply_approximation(
 
     if (shape.outer) {
         // Outer approximation.
-        //if (angle_next == M_PI) {
-        if (equal(angle_next, M_PI)) {
+        if (is_vertex_aligned(element.element, element_next.element)) {
             element_next.element.start = element.element.start;
         } else if (angle_next > M_PI) {
             if (angle_prev > M_PI) {
@@ -323,8 +339,7 @@ void apply_approximation(
         }
     } else {
         // Inner approximation.
-        //if (angle_next == M_PI) {
-        if (equal(angle_next, M_PI)) {
+        if (is_vertex_aligned(element.element, element_next.element)) {
             element_next.element.start = element.element.start;
         } else if (angle_next < M_PI) {
             if (angle_prev < M_PI) {
@@ -683,28 +698,45 @@ SmoothArcToLineOutput shape::try_smooth_arc_to_line(
 std::vector<ShapeWithHoles> shape::simplify(
         const std::vector<SimplifyInputShape>& shapes,
         AreaDbl maximum_approximation_area,
-        ElementPos minimum_number_of_vertices)
+        ElementPos minimum_number_of_vertices,
+        ElementPos minimum_average_number_of_elements)
 {
     //std::cout << "shape_simplification " << maximum_approximation_area << std::endl;
     //for (const SimplifyInputShape& shape: shapes)
     //    std::cout << shape.shape.to_string(2) << std::endl;
+
+    // A shape with less than 3 vertices is degenerate.
+    if (minimum_number_of_vertices < 3) {
+        throw std::invalid_argument(
+                FUNC_SIGNATURE + ": "
+                "minimum_number_of_vertices must be >= 3; "
+                "minimum_number_of_vertices: " + std::to_string(minimum_number_of_vertices) + ".");
+    }
 
     // Check that the input doesn't contain any circular arc.
     for (ShapePos shape_pos = 0;
             shape_pos < (ShapePos)shapes.size();
             ++shape_pos) {
         const SimplifyInputShape& shape = shapes[shape_pos];
-        for (ElementPos element_pos = 0;
-                element_pos < (ElementPos)shape.shape.shape.elements.size();
-                ++element_pos) {
-            const ShapeElement& element = shape.shape.shape.elements[element_pos];
-            if (element.type == ShapeElementType::CircularArc) {
-                throw std::invalid_argument(
-                        FUNC_SIGNATURE + ": "
-                        "all shape elements must be line segments; "
-                        "shape_pos: " + std::to_string(shape_pos) + "; "
-                        "element_pos: " + std::to_string(element_pos) + "; "
-                        "element: " + element.to_string() + ".");
+        for (ShapePos hole_pos = -1;
+                hole_pos < (ShapePos)shape.shape.holes.size();
+                ++hole_pos) {
+            const Shape& shape_or_hole = (hole_pos == -1)?
+                shape.shape.shape:
+                shape.shape.holes[hole_pos];
+            for (ElementPos element_pos = 0;
+                    element_pos < (ElementPos)shape_or_hole.elements.size();
+                    ++element_pos) {
+                const ShapeElement& element = shape_or_hole.elements[element_pos];
+                if (element.type == ShapeElementType::CircularArc) {
+                    throw std::invalid_argument(
+                            FUNC_SIGNATURE + ": "
+                            "all shape elements must be line segments; "
+                            "shape_pos: " + std::to_string(shape_pos) + "; "
+                            "hole_pos: " + std::to_string(hole_pos) + "; "
+                            "element_pos: " + std::to_string(element_pos) + "; "
+                            "element: " + element.to_string() + ".");
+                }
             }
         }
         if (!shape.shape.shape.check()) {
@@ -812,8 +844,10 @@ std::vector<ShapeWithHoles> shape::simplify(
     while (!priority_queue.empty()) {
 
         // Check stop criterion based on average number of element per item.
-        if (total_number_of_elements <= 8 * approximated_shapes.size())
+        if (total_number_of_elements
+                <= minimum_average_number_of_elements * (ElementPos)approximated_shapes.size()) {
             break;
+        }
 
         // Draw highest priority element.
         ElementPos element_key_id = priority_queue.top().first;
@@ -983,7 +1017,8 @@ void shape::simplify_export_inputs(
         const std::string& file_path,
         const std::vector<SimplifyInputShape>& shapes,
         AreaDbl maximum_approximation_area,
-        ElementPos minimum_number_of_vertices)
+        ElementPos minimum_number_of_vertices,
+        ElementPos minimum_average_number_of_elements)
 {
     std::ofstream file{file_path};
     nlohmann::json json;
@@ -995,5 +1030,6 @@ void shape::simplify_export_inputs(
     }
     json["maximum_approximation_area"] = maximum_approximation_area;
     json["minimum_number_of_vertices"] = minimum_number_of_vertices;
+    json["minimum_average_number_of_elements"] = minimum_average_number_of_elements;
     file << std::setw(4) << json << std::endl;
 }
