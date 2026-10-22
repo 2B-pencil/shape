@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <fstream>
 #include <queue>
+#include <iomanip>
 
 using namespace shape;
 
