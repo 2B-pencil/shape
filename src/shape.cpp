@@ -1504,6 +1504,16 @@ bool Shape::is_strictly_closer_to_path_start(
     return strictly_lesser(element.length(point_1.point), element.length(point_2.point));
 }
 
+bool Shape::is_exactly_closer_to_path_start(
+        const ShapePoint& point_1,
+        const ShapePoint& point_2) const
+{
+    if (point_1.element_pos != point_2.element_pos)
+        return point_1.element_pos < point_2.element_pos;
+    const ShapeElement& element = this->elements[point_1.element_pos];
+    return element.length(point_1.point) < element.length(point_2.point);
+}
+
 ShapePoint Shape::find_point_between(
         const ShapePoint& point_1,
         const ShapePoint& point_2) const
@@ -1743,7 +1753,7 @@ Shape Shape::replace(const std::vector<PathReplacement>& paths) const
             {
                 const PathReplacement& path_1 = paths[path_pos_1];
                 const PathReplacement& path_2 = paths[path_pos_2];
-                return this->is_strictly_closer_to_path_start(path_1.start, path_2.start);
+                return this->is_exactly_closer_to_path_start(path_1.start, path_2.start);
             });
 
     Shape shape;

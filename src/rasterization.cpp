@@ -116,7 +116,7 @@ void fill_columns_intersections(
                 const ShapePoint& point_1,
                 const ShapePoint& point_2)
             {
-                return shape.is_strictly_closer_to_path_start(point_1, point_2);
+                return shape.is_exactly_closer_to_path_start(point_1, point_2);
             });
     // A vertex on a column line is found as the end of an element and as the
     // start of the next one; keep it once.

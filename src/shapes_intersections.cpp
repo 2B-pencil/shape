@@ -327,7 +327,7 @@ std::vector<ShapePoint> shape::compute_intersections(
             const ShapePoint& point_1,
             const ShapePoint& point_2)
         {
-            return strictly_lesser(element.length(point_1.point), element.length(point_2.point));
+            return element.length(point_1.point) < element.length(point_2.point);
         });
     return output;
 }
@@ -384,7 +384,7 @@ std::vector<ShapePoint> shape::compute_strict_intersections(
                             overlapping_parts[p2.second].first,
                             overlapping_parts[p2.second].second.start}:
                         intersection_points[p2.second];
-                return strictly_lesser(element.length(point_1.point), element.length(point_2.point));
+                return element.length(point_1.point) < element.length(point_2.point);
             });
     std::vector<ShapePoint> output;
     intersections.push_back({1, (ElementPos)intersection_points.size()});
@@ -519,7 +519,7 @@ bool shape::intersect(
                             overlapping_parts[p2.second].first,
                             overlapping_parts[p2.second].second.start}:
                         intersection_points[p2.second];
-                return shape_1.is_strictly_closer_to_path_start(point_1, point_2);
+                return shape_1.is_exactly_closer_to_path_start(point_1, point_2);
             });
     ShapePoint current_point = {0, shape_1.elements.front().start};
     for (ElementPos pos = 0; pos < (ElementPos)intersections.size(); ++pos) {
@@ -637,7 +637,7 @@ std::vector<PathShapeIntersectionPoint> shape::compute_intersections(
         {
             ShapePoint point_1 = {p1.path_element_pos, p1.point};
             ShapePoint point_2 = {p2.path_element_pos, p2.point};
-            return path.is_strictly_closer_to_path_start(point_1, point_2);
+            return path.is_exactly_closer_to_path_start(point_1, point_2);
         });
     return output;
 }
@@ -708,7 +708,7 @@ std::vector<PathShapeIntersectionPoint> shape::compute_strict_intersections(
                         ShapePoint{
                             intersection_points[p2.second].path_element_pos,
                             intersection_points[p2.second].point};
-                return path.is_strictly_closer_to_path_start(point_1, point_2);
+                return path.is_exactly_closer_to_path_start(point_1, point_2);
             });
     std::vector<PathShapeIntersectionPoint> output;
     PathShapeIntersectionPoint current_point = {0, -1, path.elements.front().start};
@@ -1008,7 +1008,7 @@ bool shape::intersect(
                             overlapping_parts[p2.second].first,
                             overlapping_parts[p2.second].second.start}:
                         intersection_points[p2.second];
-                return shape.is_strictly_closer_to_path_start(point_1, point_2);
+                return shape.is_exactly_closer_to_path_start(point_1, point_2);
             });
     ShapePoint current_point = {0, shape.elements.front().start};
     for (ElementPos pos = 0; pos < (ElementPos)intersections.size(); ++pos) {

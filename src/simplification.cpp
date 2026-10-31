@@ -1,3 +1,5 @@
+//#define SIMPLIFICATION_ENABLE_DEBUG
+
 #include "shape/simplification.hpp"
 
 #include "shape/clean.hpp"
@@ -739,6 +741,7 @@ std::vector<ShapeWithHoles> shape::simplify(
                 }
             }
         }
+#ifdef SIMPLIFICATION_ENABLE_DEBUG
         if (!shape.shape.shape.check()) {
             throw std::invalid_argument(
                     FUNC_SIGNATURE + ": "
@@ -757,6 +760,7 @@ std::vector<ShapeWithHoles> shape::simplify(
                         "hole_pos: " + std::to_string(hole_pos) + ".");
             }
         }
+#endif
     }
 
     // Build element_keys, approximated_bin_types, approximated_item_types.
@@ -984,6 +988,7 @@ std::vector<ShapeWithHoles> shape::simplify(
             shapes_new[shape_pos] = compute_union(union_inputs[shape_pos]).shapes_with_holes.front();
     }
 
+#ifdef SIMPLIFICATION_ENABLE_DEBUG
     // Check output.
     for (ShapePos shape_pos = 0;
             shape_pos < (ShapePos)shapes.size();
@@ -1008,6 +1013,7 @@ std::vector<ShapeWithHoles> shape::simplify(
             }
         }
     }
+#endif
 
     //std::cout << "shape_simplification end" << std::endl;
     return shapes_new;
