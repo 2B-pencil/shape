@@ -10,6 +10,7 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <numeric>
 
 using namespace shape;
 

@@ -1,6 +1,7 @@
 #include "shape/intersection_tree.hpp"
 
 #include "shape/shapes_intersections.hpp"
+#include <numeric>
 
 //#include <iostream>
 
