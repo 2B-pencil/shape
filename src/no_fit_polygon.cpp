@@ -874,6 +874,11 @@ void compute_feasible_elements_and_points(
     // strictly inside a convex NFP, go to the first point where the element
     // reaches the boundary of this convex NFP. The element is strictly
     // inside the union if its end is reached this way.
+    //
+    // Consecutive elements of a convex NFP are often strictly inside the
+    // same other convex NFP, so the last convex NFP found is checked first,
+    // before searching the tree.
+    ShapePos last_convex_nfp_pos = -1;
     auto is_strictly_inside_convex_nfps = [&](const ShapeElement& element)
     {
         Point current_point = element.start;
@@ -881,16 +886,24 @@ void compute_feasible_elements_and_points(
             AxisAlignedBoundingBox point_aabb = {
                 current_point.x, current_point.x,
                 current_point.y, current_point.y};
-            auto condition = [&](ShapePos convex_nfp_pos)
-            {
-                return min_max_strictly_contains(convex_nfp_pos, point_aabb);
-            };
-            ShapePos convex_nfp_pos = convex_nfps_tree.find_shape(
-                    current_point,
-                    true,
-                    condition);
+            ShapePos convex_nfp_pos = -1;
+            if (last_convex_nfp_pos != -1
+                    && min_max_strictly_contains(last_convex_nfp_pos, point_aabb)
+                    && convex_nfps[last_convex_nfp_pos].contains(current_point, true)) {
+                convex_nfp_pos = last_convex_nfp_pos;
+            } else {
+                auto condition = [&](ShapePos convex_nfp_pos)
+                {
+                    return min_max_strictly_contains(convex_nfp_pos, point_aabb);
+                };
+                convex_nfp_pos = convex_nfps_tree.find_shape(
+                        current_point,
+                        true,
+                        condition);
+            }
             if (convex_nfp_pos == -1)
                 return false;
+            last_convex_nfp_pos = convex_nfp_pos;
             ShapeElement remaining_element = element.extract(current_point, element.end);
             LengthDbl current_length = element.length(current_point);
             bool found = false;
@@ -936,6 +949,49 @@ void compute_feasible_elements_and_points(
                 ++element_pos) {
             const ShapeElement& element = elements[element_pos];
             if (is_strictly_inside_convex_nfps(element))
+                continue;
+            remaining_elements.push_back(element);
+            remaining_elements_convex_nfp_pos.push_back(elements_convex_nfp_pos[element_pos]);
+        }
+        elements = remaining_elements;
+        elements_convex_nfp_pos = remaining_elements_convex_nfp_pos;
+    }
+
+    // Remove the elements on an element of the boundary of 'output.nfp':
+    // none of their points is strictly inside it, so none is feasible.
+    // Their intersections with the other elements are not needed either:
+    // these intersections are not strictly inside 'output.nfp', and the
+    // overlapping parts in opposite directions have convex NFPs on both
+    // sides, so they only reach the boundary of 'output.nfp' at their ends.
+    {
+        std::vector<ShapeElement> nfp_elements;
+        for (const ShapeWithHoles& shape: output.nfp.shapes_with_holes) {
+            for (const ShapeElement& element: shape.shape.elements)
+                nfp_elements.push_back(element);
+            for (const Shape& hole: shape.holes)
+                for (const ShapeElement& element: hole.elements)
+                    nfp_elements.push_back(element);
+        }
+        IntersectionTree nfp_elements_tree({}, nfp_elements, {});
+        auto is_on_nfp_boundary = [&](const ShapeElement& element)
+        {
+            for (ElementPos nfp_element_pos: nfp_elements_tree.intersect(element.middle(), false).element_ids) {
+                const ShapeElement& nfp_element = nfp_elements[nfp_element_pos];
+                if (nfp_element.type == element.type
+                        && nfp_element.contains(element.start)
+                        && nfp_element.contains(element.end)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        std::vector<ShapeElement> remaining_elements;
+        std::vector<ShapePos> remaining_elements_convex_nfp_pos;
+        for (ElementPos element_pos = 0;
+                element_pos < (ElementPos)elements.size();
+                ++element_pos) {
+            const ShapeElement& element = elements[element_pos];
+            if (is_on_nfp_boundary(element))
                 continue;
             remaining_elements.push_back(element);
             remaining_elements_convex_nfp_pos.push_back(elements_convex_nfp_pos[element_pos]);
